@@ -1,9 +1,9 @@
 /**
- * Rapid Mockup Studio - Professional Offline Mockup Generator
+ * Raven Mockup Studio - Professional Offline Mockup Generator
  * Core rendering engine using Pixi.js WebGL with Advanced Realism Engine
  */
 
-class RapidMockStudio {
+class RavenMockupStudio {
   constructor() {
     // State
     this.mockupData = null;
@@ -29,9 +29,16 @@ class RapidMockStudio {
       rotation: 0,
       blendMode: 'multiply', // Still used for state, though render engine defaults to sophisticated blend
       textureStrength: 30,
-      textureStrength: 30,
       showOverlay: true,
-      mockupColor: '#ffffff' // Feature 5: Mockup Tint
+      mockupColor: '#ffffff', // Feature 5: Mockup Tint
+      // Watermark Settings (v1.0.2)
+      watermarkOpacity: 50,
+      watermarkScale: 20,
+      watermarkPosition: 'bottom-right',
+      exportPreset: 'original',
+      exportFormat: 'jpg',
+      customExportWidth: 2000,
+      customExportHeight: null
     };
 
     // Pixi.js components
@@ -41,6 +48,8 @@ class RapidMockStudio {
     this.displacementFilter = null;
     this.designContainer = null;
     this.designSprite = null;
+    this.watermarkSprite = null; // v1.0.2
+    this.watermarkTexture = null; // v1.0.2
     // New Realism Components
     this.shadowLayer = null;
     this.highlightLayer = null;
@@ -63,28 +72,31 @@ class RapidMockStudio {
     this.setupPresetListeners();
     this.loadSettings();
     this.initAutoUpdater();
+    this.initWatermarkEvents();
+    this.checkLicense();
   }
 
   saveSettings() {
     // Basic persistence to localStorage
     try {
-      localStorage.setItem('rapidmock-settings', JSON.stringify(this.settings));
+      localStorage.setItem('ravenmock-settings', JSON.stringify(this.settings));
     } catch (e) { console.error("Failed to save settings", e); }
   }
 
   loadSettings() {
-    // Default Settings
-    if (!this.settings.exportPreset) this.settings.exportPreset = 'original';
-    if (!this.settings.customExportWidth) this.settings.customExportWidth = 2000;
-
     // Load from storage
     try {
-      const saved = localStorage.getItem('rapidmock-settings');
+      const saved = localStorage.getItem('ravenmock-settings');
       if (saved) {
         const parsed = JSON.parse(saved);
         this.settings = { ...this.settings, ...parsed };
       }
-    } catch (e) { console.error(e); }
+      // CRITICAL FIX: To prevent "Default Custom" bug reported by user,
+      // we always start in 'original' mode on fresh app launch.
+      this.settings.exportPreset = 'original';
+    } catch (e) {
+      console.error(e);
+    }
 
     // Apply to UI
     if (this.presetSelect) {
@@ -93,10 +105,25 @@ class RapidMockStudio {
     if (this.customWidthInput) {
       this.customWidthInput.value = this.settings.customExportWidth;
     }
+    if (this.customHeightInput) {
+      this.customHeightInput.value = this.settings.customExportHeight || '';
+    }
     if (this.exportFormatSelect) {
       // Default to jpg if undefined
       if (!this.settings.exportFormat) this.settings.exportFormat = 'jpg';
+      if (!this.settings.linkedFolders) this.settings.linkedFolders = [];
       this.exportFormatSelect.value = this.settings.exportFormat;
+    }
+
+    // Apply Watermark UI (v1.0.2)
+    if (this.selectWatermarkPos) this.selectWatermarkPos.value = this.settings.watermarkPosition;
+    if (this.sliderWatermarkScale) {
+      this.sliderWatermarkScale.value = this.settings.watermarkScale;
+      if (this.watermarkScaleValue) this.watermarkScaleValue.textContent = `${this.settings.watermarkScale}%`;
+    }
+    if (this.sliderWatermarkOpacity) {
+      this.sliderWatermarkOpacity.value = this.settings.watermarkOpacity;
+      if (this.watermarkOpacityValue) this.watermarkOpacityValue.textContent = `${this.settings.watermarkOpacity}%`;
     }
 
     // Update visibility using the new helper
@@ -112,6 +139,16 @@ class RapidMockStudio {
     this.inputInfo = document.getElementById('input-info');
     this.outputInfo = document.getElementById('output-info');
     this.sampleDesignArea = document.getElementById('sample-design-area');
+
+    // Watermark UI (v1.0.2)
+    this.btnLoadWatermark = document.getElementById('btn-load-watermark');
+    this.btnClearWatermark = document.getElementById('btn-clear-watermark');
+    this.watermarkControls = document.getElementById('watermark-controls');
+    this.selectWatermarkPos = document.getElementById('select-watermark-pos');
+    this.sliderWatermarkScale = document.getElementById('slider-watermark-scale');
+    this.sliderWatermarkOpacity = document.getElementById('slider-watermark-opacity');
+    this.watermarkScaleValue = document.getElementById('watermark-scale-value');
+    this.watermarkOpacityValue = document.getElementById('watermark-opacity-value');
 
     // Canvas
     this.canvasWrapper = document.getElementById('canvas-wrapper');
@@ -138,16 +175,27 @@ class RapidMockStudio {
     this.fileCount = document.getElementById('file-count');
     this.progressSection = document.getElementById('progress-section');
     this.progressFill = document.getElementById('progress-fill');
-    this.progressFill = document.getElementById('progress-fill');
     this.progressText = document.getElementById('progress-text');
 
     // Library
     this.btnOpenLibrary = document.getElementById('btn-open-library');
     this.btnCloseLibrary = document.getElementById('btn-close-library');
+    
+    // License UI
+    this.licenseModal = document.getElementById('license-modal');
+    this.inputLicenseKey = document.getElementById('input-license-key');
+    this.btnActivateLicense = document.getElementById('btn-activate-license');
+    this.licenseErrorMessage = document.getElementById('license-error-message');
     this.libraryModal = document.getElementById('library-modal');
     this.libraryCategories = document.getElementById('library-categories');
     this.libraryGrid = document.getElementById('library-grid');
+    this.librarySearch = document.getElementById('library-search');
+    this.libraryCountTag = document.getElementById('library-count-tag');
+    this.btnConfirmLibrary = document.getElementById('btn-confirm-library');
     this.btnImportLibrary = document.getElementById('btn-import-library');
+    this.btnCloudStore = document.getElementById('btn-cloud-store'); // Cloud Store Button
+    this.cloudFilterGroup = document.getElementById('cloud-filter-group');
+    this.cloudFilterSelect = document.getElementById('cloud-filter-select');
 
     // Input Modal
     this.inputModal = document.getElementById('input-modal');
@@ -180,7 +228,12 @@ class RapidMockStudio {
 
     this.btnCloseBatch = document.getElementById('btn-close-batch');
     this.btnOpenFolder = document.getElementById('btn-open-folder');
-    this.btnAutoFit = document.getElementById('btn-auto-fit');
+
+    // Alignment Tools (v1.0.2)
+    this.btnAlignCenterH = document.getElementById('btn-align-center-h');
+    this.btnAlignCenterV = document.getElementById('btn-align-center-v');
+    this.btnAlignFill = document.getElementById('btn-align-fill');
+    this.btnResetTransform = document.getElementById('btn-transform-reset');
 
     // Generate Button & Count
     this.btnGenerate = document.getElementById('btn-generate');
@@ -218,6 +271,26 @@ class RapidMockStudio {
     this.btnLoadMockup.addEventListener('click', () => this.loadMockup());
     if (this.btnOpenLibrary) this.btnOpenLibrary.addEventListener('click', () => this.openLibrary());
     if (this.btnCloseLibrary) this.btnCloseLibrary.addEventListener('click', () => this.closeLibrary());
+    
+    // Cloud Store UI
+    if (this.btnCloudStore) {
+      this.btnCloudStore.addEventListener('click', () => this.openCloudStore());
+    }
+
+    if (this.librarySearch) {
+      this.librarySearch.addEventListener('input', () => {
+        if (this._inCloudMode) {
+          this._cloudSearch = this.librarySearch.value;
+          this.renderCloudGrid();
+        } else {
+          // If we have a current category, re-render it to apply filter
+          const activeItem = this.libraryCategories.querySelector('.active');
+          if (activeItem) {
+            activeItem.click(); // Trigger re-render
+          }
+        }
+      });
+    }
 
     // Close modal on outside click
     if (this.libraryModal) {
@@ -241,11 +314,32 @@ class RapidMockStudio {
       this.btnSingleDesign.addEventListener('click', () => this.selectSingleDesignInput());
     }
 
-    // Auto Fit Button
-    if (this.btnAutoFit) {
-      this.btnAutoFit.addEventListener('click', () => this.positionDesign(true));
+    // Alignment Tools (v1.0.2)
+    if (this.btnAlignCenterH) {
+      this.btnAlignCenterH.addEventListener('click', () => {
+        this.designPosition.x = 0.5;
+        this.updateDesignTransform();
+      });
     }
 
+    if (this.btnAlignCenterV) {
+      this.btnAlignCenterV.addEventListener('click', () => {
+        this.designPosition.y = 0.5;
+        this.updateDesignTransform();
+      });
+    }
+
+    if (this.btnAlignFill) {
+      this.btnAlignFill.addEventListener('click', () => {
+        this.fillDesignWidth();
+      });
+    }
+
+    if (this.btnResetTransform) {
+      this.btnResetTransform.addEventListener('click', () => {
+        this.resetDesignTransform();
+      });
+    }
     // Sample design area
     this.sampleDesignArea.addEventListener('click', () => this.selectSampleDesign());
     this.sampleDesignArea.addEventListener('dragover', (e) => {
@@ -292,8 +386,9 @@ class RapidMockStudio {
 
     this.selectBlend.addEventListener('change', (e) => {
       this.settings.blendMode = e.target.value;
-      // Realism engine uses fixed specialized blends, but we can trigger update
+      this.updateDesign();
       this.updateLighting();
+      this.saveSettings();
     });
 
     this.sliderTexture.addEventListener('input', (e) => {
@@ -450,7 +545,7 @@ class RapidMockStudio {
       this.btnAckPatchNotes.addEventListener('click', () => {
         this.patchNotesModal.style.display = 'none';
         // Also save that they've seen it (redundant but safe)
-        const currentVersion = '1.0.1';
+        const currentVersion = '1.0.2';
         localStorage.setItem('lastViewedPatchNotes', currentVersion);
       });
     }
@@ -460,7 +555,7 @@ class RapidMockStudio {
   }
 
   checkPatchNotes() {
-    const currentVersion = '1.0.1'; // HARDCODED for this release
+    const currentVersion = '1.0.2'; // HARDCODED for this release
     const lastViewed = localStorage.getItem('lastViewedPatchNotes');
 
     if (lastViewed !== currentVersion) {
@@ -496,22 +591,29 @@ class RapidMockStudio {
       this.saveSettings();
       if (this.updateHeightDisplay) this.updateHeightDisplay();
     });
+
+    this.customHeightInput.addEventListener('change', (e) => {
+      let val = parseInt(e.target.value);
+      if (isNaN(val)) {
+        this.settings.customExportHeight = null;
+      } else {
+        if (val < 100) val = 100;
+        if (val > 8000) val = 8000;
+        this.settings.customExportHeight = val;
+      }
+      this.saveSettings();
+    });
   }
 
   updateHeightDisplay() {
     // We no longer enforce auto-height. User can edit it.
-    // If they haven't set a height manually yet, we could suggest one, but for now let's just leave it open.
-    // Or better: Only update if it's currently empty or "Auto"
     if (this.customHeightInput) {
-      this.customHeightInput.disabled = false;
-      this.customHeightInput.readOnly = false;
-
-      if (this.customHeightInput.value === 'Auto' || this.customHeightInput.value === '') {
-        if (this.background && this.background.texture && this.background.texture.valid) {
-          const aspect = this.background.texture.width / this.background.texture.height;
-          const h = Math.round(this.settings.customExportWidth / aspect);
-          this.customHeightInput.value = h;
-        }
+      // If it's a fresh load or Width was changed, and current height is empty, suggest one.
+      // But don't overwrite if user typed something.
+      if (!this.settings.customExportHeight && this.background && this.background.texture && this.background.texture.valid) {
+        const aspect = this.background.texture.width / this.background.texture.height;
+        const h = Math.round(this.settings.customExportWidth / aspect);
+        this.customHeightInput.placeholder = h; // Show as placeholder what it WOULD be
       }
     }
   }
@@ -570,6 +672,11 @@ class RapidMockStudio {
       setupDropZone(this.canvasWrapper, (files) => this.handleInputFolderDrop(files));
     }
 
+    // 5. Watermark Drop (v1.0.2)
+    if (this.btnLoadWatermark) {
+      setupDropZone(this.btnLoadWatermark, (files) => this.handleWatermarkDrop(files));
+    }
+
     // Bind Crop Button
     this.btnCrop = document.getElementById('btn-crop');
     if (this.btnCrop) {
@@ -616,12 +723,39 @@ class RapidMockStudio {
         this.designSprite.addChild(this.cropMask);
       }
       this.updateCropMask();
-
     } else {
       // EXIT CROP MODE
       console.log('Exiting Crop Mode');
+      if (this.designSprite && this.cropMask) {
+        this.designSprite.mask = null;
+        this.designSprite.removeChild(this.cropMask);
+        this.cropMask.destroy();
+        this.cropMask = null;
+      }
     }
     this.drawSelectionUI();
+  }
+
+  handleWatermarkDrop(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/avif'];
+    if (!validTypes.includes(file.type)) {
+      console.warn("Invalid watermark file type:", file.type);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      this.watermarkTexture = PIXI.Texture.from(e.target.result);
+      
+      // Setup UI (Match loadWatermark logic)
+      if (this.watermarkControls) this.watermarkControls.classList.remove('hidden');
+      if (this.btnClearWatermark) this.btnClearWatermark.classList.remove('hidden');
+      
+      this.createWatermarkSprite();
+    };
+    reader.readAsDataURL(file);
   }
 
   async handleMockupDrop(files) {
@@ -1083,8 +1217,10 @@ class RapidMockStudio {
 
     this.displacementFilter = new PIXI.DisplacementFilter(this.displacementSprite);
     this.displacementFilter.resolution = 2; // High resolution sampling for smoother wrapping
-    this.displacementFilter.scale.x = this.settings.warpStrength;
-    this.displacementFilter.scale.y = this.settings.warpStrength;
+    // FIX: Initialize at 0, defer real value to after first render tick
+    // This forces PIXI to detect a state change and apply the displacement.
+    this.displacementFilter.scale.x = 0;
+    this.displacementFilter.scale.y = 0;
 
     // Layer 3: Design Container
     this.designContainer = new PIXI.Container();
@@ -1203,11 +1339,23 @@ class RapidMockStudio {
     }
 
     this.designContainer.addChild(this.designSprite);
+    this.updateDesign(); // Apply initial opacity/blend
 
     // Setup Grid Processing for Mesh
     this.setupMeshGrid();
 
     this.updateGenerateButton();
+
+    // FIX: Force displacement filter pipeline reset.
+    // PIXI won't detect a scale change if the value is already the same.
+    // So we: 1) null out the filters array, 2) wait for a render flush,
+    // 3) reassign the filters AND set scale from 0 → warpStrength.
+    this.displacementFilter.scale.set(0, 0);
+    this.designContainer.filters = null;
+    setTimeout(() => {
+      this.designContainer.filters = [this.displacementFilter];
+      this.displacementFilter.scale.set(this.settings.warpStrength, this.settings.warpStrength);
+    }, 150);
   }
 
   positionDesign(isNewDesign = false) {
@@ -1241,6 +1389,62 @@ class RapidMockStudio {
 
     // Initial transform update will handle x/y/width/height
     this.updateDesignTransform();
+  }
+
+  fillDesignWidth() {
+    if (!this.designSprite || !this.app) return;
+
+    // Fill 95% of mockup width (Safety margin)
+    const targetPixels = this.app.screen.width * 0.95;
+    const newScale = targetPixels / this.baseDesignWidth;
+
+    this.settings.scale = Math.round(newScale * 100);
+    this.designScale = newScale;
+
+    // Update UI
+    if (this.sliderScale) {
+      this.sliderScale.value = this.settings.scale;
+      this.scaleValue.textContent = `${this.settings.scale}%`;
+    }
+
+    this.updateDesignTransform();
+  }
+
+  resetDesignTransform() {
+    if (!this.designSprite) return;
+
+    // Reset State
+    this.designPosition = { x: 0.5, y: 0.5 };
+    this.designScale = 1.0;
+    this.designRotation = 0;
+
+    this.settings.scale = 100;
+    this.settings.rotation = 0;
+    this.settings.opacity = 100;
+    this.settings.warpStrength = 12; // Default
+
+    // Update UI Sliders
+    if (this.sliderScale) {
+      this.sliderScale.value = 100;
+      this.scaleValue.textContent = "100%";
+    }
+    if (this.sliderRotation) {
+      this.sliderRotation.value = 0;
+      this.rotationValue.textContent = "0°";
+    }
+    if (this.sliderOpacity) {
+      this.sliderOpacity.value = 100;
+      this.opacityValue.textContent = "100%";
+    }
+    if (this.sliderWarp) {
+      this.sliderWarp.value = 12;
+      this.warpValue.textContent = "12";
+    }
+
+    this.updateDesignTransform();
+    this.updateDesign();
+    this.updateDisplacement();
+    this.updateLighting();
   }
 
   updateCropMask() {
@@ -1298,11 +1502,124 @@ class RapidMockStudio {
     if (!this.designSprite) return;
     this.designSprite.alpha = this.settings.opacity / 100;
   }
-
   updateDisplacement() {
     if (!this.displacementFilter) return;
-    this.displacementFilter.scale.x = this.settings.warpStrength;
-    this.displacementFilter.scale.y = this.settings.warpStrength;
+    // Use .set() to explicitly trigger PIXI's ObservablePoint change callback
+    this.displacementFilter.scale.set(this.settings.warpStrength, this.settings.warpStrength);
+  }
+
+  // --- WATERMARK SYSTEM (v1.0.2) ---
+  initWatermarkEvents() {
+    if (this.btnLoadWatermark) {
+      this.btnLoadWatermark.addEventListener('click', () => this.loadWatermark());
+    }
+    if (this.btnClearWatermark) {
+      this.btnClearWatermark.addEventListener('click', () => this.clearWatermark());
+    }
+    if (this.selectWatermarkPos) {
+      this.selectWatermarkPos.addEventListener('change', (e) => {
+        this.settings.watermarkPosition = e.target.value;
+        this.updateWatermarkTransform();
+        this.saveSettings();
+      });
+    }
+    if (this.sliderWatermarkScale) {
+      this.sliderWatermarkScale.addEventListener('input', (e) => {
+        this.settings.watermarkScale = parseInt(e.target.value);
+        if (this.watermarkScaleValue) this.watermarkScaleValue.textContent = `${this.settings.watermarkScale}%`;
+        this.updateWatermarkTransform();
+        this.saveSettings();
+      });
+    }
+    if (this.sliderWatermarkOpacity) {
+      this.sliderWatermarkOpacity.addEventListener('input', (e) => {
+        this.settings.watermarkOpacity = parseInt(e.target.value);
+        if (this.watermarkOpacityValue) this.watermarkOpacityValue.textContent = `${this.settings.watermarkOpacity}%`;
+        if (this.watermarkSprite) this.watermarkSprite.alpha = this.settings.watermarkOpacity / 100;
+        this.saveSettings();
+      });
+    }
+  }
+
+  async loadWatermark() {
+    const watermarkData = await window.electronAPI.selectSampleDesignFile(); // Reusing the high-res file picker
+    if (watermarkData) {
+      this.watermarkTexture = PIXI.Texture.from(watermarkData);
+      
+      // Setup UI
+      this.watermarkControls.classList.remove('hidden');
+      this.btnClearWatermark.classList.remove('hidden');
+      
+      this.createWatermarkSprite();
+    }
+  }
+
+  createWatermarkSprite() {
+    if (!this.app || !this.watermarkTexture) return;
+
+    // Remove old one if exists
+    if (this.watermarkSprite) {
+      this.watermarkSprite.destroy();
+    }
+
+    this.watermarkSprite = new PIXI.Sprite(this.watermarkTexture);
+    this.watermarkSprite.alpha = this.settings.watermarkOpacity / 100;
+
+    // Add as the TOP layer
+    this.app.stage.addChild(this.watermarkSprite);
+    
+    // Position it
+    if (this.watermarkTexture.baseTexture.valid) {
+      this.updateWatermarkTransform();
+    } else {
+      this.watermarkTexture.baseTexture.on('loaded', () => this.updateWatermarkTransform());
+    }
+  }
+
+  clearWatermark() {
+    if (this.watermarkSprite) {
+      this.watermarkSprite.destroy();
+      this.watermarkSprite = null;
+    }
+    this.watermarkTexture = null;
+    this.watermarkControls.classList.add('hidden');
+    this.btnClearWatermark.classList.add('hidden');
+  }
+
+  updateWatermarkTransform() {
+    if (!this.watermarkSprite || !this.app) return;
+
+    const canvasW = this.app.screen.width;
+    const canvasH = this.app.screen.height;
+    const padding = 20; // Padding from edges
+
+    // 1. Scale
+    // We scale relative to mockup width. 100% means the watermark spans the width.
+    const targetScale = (canvasW * (this.settings.watermarkScale / 100)) / this.watermarkTexture.width;
+    this.watermarkSprite.scale.set(targetScale);
+
+    const w = this.watermarkSprite.width;
+    const h = this.watermarkSprite.height;
+
+    // 2. Position
+    switch (this.settings.watermarkPosition) {
+      case 'top-left':
+        this.watermarkSprite.position.set(padding, padding);
+        break;
+      case 'top-right':
+        this.watermarkSprite.position.set(canvasW - w - padding, padding);
+        break;
+      case 'bottom-left':
+        this.watermarkSprite.position.set(padding, canvasH - h - padding);
+        break;
+      case 'center':
+        this.watermarkSprite.position.set((canvasW - w) / 2, (canvasH - h) / 2);
+        break;
+      case 'bottom-right':
+      default:
+        this.watermarkSprite.position.set(canvasW - w - padding, canvasH - h - padding);
+        break;
+    }
   }
 
   updateMockupColor() {
@@ -1328,16 +1645,14 @@ class RapidMockStudio {
     // We scale relative to our "Calibrated Max" values
     const intensity = this.settings.textureStrength / 100;
 
-    // Base Calibrations: "Subtle Realism" Mode
-    // We lowered the Shadow Max drastically (0.6 -> 0.35) because on Dark Shirts, 
-    // the previous value was creating a "Black Overlay".
-    // 0.35 is enough to see the folds, but keeps white ink looking white.
-    // Shadow: 0.35
-    // Texture: 0.15
-    // Highlight: 0.4 (Boosted to add "Ink Sheen")
-    this.shadowLayer.alpha = 0.35 * intensity;
-    this.textureLayer.alpha = 0.15 * intensity;
-    this.highlightLayer.alpha = 0.4 * intensity;
+    // Advanced Realism Calibration (v1.0.2)
+    // Increased maximums to allow deeper folds and highlights for advanced users
+    // Shadow: 0.50 (Creates deeper folds on light shirts)
+    // Texture: 0.25 (Pops fabric texture significantly)
+    // Highlight: 0.50 (Stronger sheen on wet/glossy mockups)
+    this.shadowLayer.alpha = 0.50 * intensity;
+    this.textureLayer.alpha = 0.25 * intensity;
+    this.highlightLayer.alpha = 0.50 * intensity;
   }
 
   getBlendMode(mode) {
@@ -1932,10 +2247,10 @@ class RapidMockStudio {
           // Resize if Preset is active
           // FIX: Pass exportFormat to ensure transparency/filetype is handled correctly
           if (this.settings.exportPreset !== 'original') {
-            base64 = await this.resizeImage(base64, this.settings.exportPreset, this.settings.customExportWidth, this.settings.exportFormat);
+            base64 = await this.resizeImage(base64, this.settings.exportPreset, this.settings.customExportWidth, this.settings.customExportHeight, this.settings.exportFormat);
           } else {
             // FIX: Even for 'original', we must respect the chosen format (PNG/WebP/JPG)
-            base64 = await this.resizeImage(base64, 'original', null, this.settings.exportFormat);
+            base64 = await this.resizeImage(base64, 'original', null, null, this.settings.exportFormat);
           }
 
           // Generate output filename -> {DesignName}_{MockupName}.extension
@@ -2131,6 +2446,48 @@ class RapidMockStudio {
     highlight.filters = [highlightMatrix];
     highlight.alpha = 0.4 * (this.settings.textureStrength / 100); // Correct (Matches 0.4)
     if (this.settings.showOverlay) app.stage.addChild(highlight);
+
+    // --- WATERMARK EXPORT LAYER (v1.0.2) ---
+    // Must be the LAST layer added so it renders on top of everything
+    if (this.watermarkTexture && this.watermarkTexture.baseTexture && this.watermarkTexture.baseTexture.valid) {
+      const exportCanvasW = app.screen.width;
+      const exportCanvasH = app.screen.height;
+      const previewCanvasW = this.app ? this.app.screen.width : 800;
+      const resMultiplier = exportCanvasW / previewCanvasW;
+
+      const watermarkExport = new PIXI.Sprite(this.watermarkTexture);
+      watermarkExport.alpha = this.settings.watermarkOpacity / 100;
+
+      // Scale relative to export canvas width — same formula as updateWatermarkTransform()
+      const targetWidth = exportCanvasW * (this.settings.watermarkScale / 100);
+      const targetScale = targetWidth / this.watermarkTexture.width;
+      watermarkExport.scale.set(targetScale);
+
+      const w = watermarkExport.width;
+      const h = watermarkExport.height;
+      const padding = 20 * resMultiplier; // Proportional padding
+
+      switch (this.settings.watermarkPosition) {
+        case 'top-left':
+          watermarkExport.position.set(padding, padding);
+          break;
+        case 'top-right':
+          watermarkExport.position.set(exportCanvasW - w - padding, padding);
+          break;
+        case 'bottom-left':
+          watermarkExport.position.set(padding, exportCanvasH - h - padding);
+          break;
+        case 'center':
+          watermarkExport.position.set((exportCanvasW - w) / 2, (exportCanvasH - h) / 2);
+          break;
+        case 'bottom-right':
+        default:
+          watermarkExport.position.set(exportCanvasW - w - padding, exportCanvasH - h - padding);
+          break;
+      }
+
+      app.stage.addChild(watermarkExport);
+    }
   }
 
   async renderExport(exportApp, designData) {
@@ -2165,7 +2522,6 @@ class RapidMockStudio {
       return;
     }
 
-    // Create Design Sprite (SimplePlane)
     // Create Design Sprite (SimplePlane) (40x40 for ULTRA fidelity)
     const designSprite = new PIXI.SimplePlane(designTexture, 40, 40);
 
@@ -2253,7 +2609,7 @@ class RapidMockStudio {
 
   // --- LIBRARY METHODS ---
 
-  async resizeImage(base64, preset, customWidth, format = 'jpg') {
+  async resizeImage(base64, preset, customWidth, customHeight, format = 'jpg') {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -2271,7 +2627,12 @@ class RapidMockStudio {
           targetHeight = 2048;
         } else if (preset === 'custom') {
           targetWidth = customWidth;
-          targetHeight = targetWidth / aspect;
+          // Use user height if provided, otherwise auto calc
+          if (customHeight && !isNaN(customHeight)) {
+            targetHeight = customHeight;
+          } else {
+            targetHeight = targetWidth / aspect;
+          }
         } else if (preset === 'original') {
           // Pass-through for Quality Conversion (PNG -> JPEG 0.98)
           targetWidth = img.width;
@@ -2343,8 +2704,16 @@ class RapidMockStudio {
     });
   }
   async openLibrary() {
+    this._inCloudMode = false;
     this.libraryModal.style.display = 'flex';
     this.selectedLibraryItems.clear(); // Reset selection
+    
+    // Reset Header UI
+    if (this.cloudFilterGroup) this.cloudFilterGroup.style.display = 'none';
+    if (this.librarySearch) {
+      this.librarySearch.placeholder = 'Search all mockups...';
+    }
+    
     this.loadLibraryData();
     this.updateLibraryFooter();
   }
@@ -2355,14 +2724,34 @@ class RapidMockStudio {
 
   async loadLibraryData() {
     try {
-      const response = await window.electronAPI.scanLibrary();
+      console.log('Fetching library data...');
+      if (!this.settings.linkedFolders) this.settings.linkedFolders = [];
+      const response = await window.electronAPI.scanLibrary(this.settings.linkedFolders);
       this.libraryData = response.structure || {};
       this.renderLibraryCategories();
-      // Fix: Pass array + name
-      this.renderLibraryGrid(this.libraryData['T-Shirts'] || [], 'T-Shirts');
+      
+      // Default view: Show All Mockups
+      const allFiles = this.getAllMockups(this.libraryData);
+      console.log('Total mockups found:', allFiles.length);
+      this.renderLibraryGrid(allFiles, 'All Mockups');
     } catch (error) {
       console.error('Failed to load library:', error);
     }
+  }
+
+  getAllMockups(folders) {
+    if (!folders) return [];
+    let files = [];
+    for (const cat in folders) {
+      const catData = folders[cat];
+      if (catData.files && Array.isArray(catData.files)) {
+        files = files.concat(catData.files);
+      }
+      if (catData.folders) {
+        files = files.concat(this.getAllMockups(catData.folders));
+      }
+    }
+    return files;
   }
 
   renderLibraryCategories() {
@@ -2378,58 +2767,14 @@ class RapidMockStudio {
     const custom = allKeys.filter(k => !fixedOrder.includes(k)).sort();
 
     // Combine: Standard first, then Custom
-    const keys = [...standard, ...custom];
+    const keys = ['All Mockups', ...standard, ...custom];
 
     keys.forEach((cat) => {
-      const li = document.createElement('li');
-      // SVG Trash Icon
-      li.innerHTML = `
-        <span>${cat}</span>
-        <div class="delete-icon" title="Delete Category">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-          </svg>
-        </div>`;
-
-      if (cat === 'T-Shirts') li.classList.add('active'); // Default
-
-      // Selection Click
-      li.addEventListener('click', (e) => {
-        // Prevent selection if clicking delete bin context
-        if (e.target.closest('.delete-icon')) return;
-
-        // Remove active from all
-        this.libraryCategories.querySelectorAll('li').forEach(el => el.classList.remove('active'));
-        li.classList.add('active');
-        this.renderLibraryGrid(this.libraryData[cat] || [], cat);
-      });
-
-      // Delete Click
-      const deleteBtn = li.querySelector('.delete-icon');
-      deleteBtn.addEventListener('click', async (e) => {
-        e.stopPropagation(); // Don't select the category
-
-        if (confirm(`Are you sure you want to delete "${cat}"?\nThis action cannot be undone.`)) {
-          try {
-            const success = await window.electronAPI.deleteLibraryCategory(cat);
-            if (success) {
-              // Update UI immediately
-              const active = this.libraryCategories.querySelector('.active');
-              if (active === li) {
-                this.renderLibraryGrid(this.libraryData['T-Shirts'] || [], 'T-Shirts'); // Fallback
-              }
-              this.loadLibraryData();
-            } else {
-              alert("Could not delete category. Please try restarting the app.");
-            }
-          } catch (err) {
-            console.error(err);
-            alert("Error: Please RESTART the app to enable this new feature.");
-          }
-        }
-      });
-
+      const li = this.createCategoryElement(cat, this.libraryData[cat]);
+      if (cat === 'All Mockups') {
+        const row = li.querySelector('.category-row');
+        if (row) row.classList.add('active');
+      }
       this.libraryCategories.appendChild(li);
     });
 
@@ -2437,23 +2782,152 @@ class RapidMockStudio {
     const addBtn = document.createElement('li');
     addBtn.className = 'library-category-add';
     addBtn.innerHTML = `<span>+ New Category</span>`;
-
-    // Use standard event listener
     addBtn.addEventListener('click', (e) => {
-      console.log("New Category Button Clicked!");
-      e.stopPropagation(); // Prevent bubbling issues
+      e.stopPropagation();
       this.createNewCategory();
     });
+    this.libraryCategories.appendChild(addBtn);
 
     this.libraryCategories.appendChild(addBtn);
   }
 
+  createCategoryElement(name, catData = { folders: {}, files: [] }, isSub = false) {
+    const li = document.createElement('li');
+    if (isSub) li.className = 'sub-category-item';
+
+    const safeData = catData || { folders: {}, files: [] };
+    const hasFolders = safeData && safeData.folders && Object.keys(safeData.folders).length > 0;
+    
+    // Fix: isRemovable was missing its definition
+    const isRemovable = !['All Mockups', 'T-Shirts', 'Hoodies', 'Cups', 'Mugs', 'Caps', 'Wall Frames', 'User Saved', 'Universal'].includes(name);
+
+    li.innerHTML = `
+      <div class="category-row">
+        ${hasFolders ? `
+        <div class="category-chevron-wrapper">
+          <svg class="category-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </div>` : '<div style="width: 20px; margin-right: 4px; flex-shrink: 0;"></div>'}
+        <span>${name}</span>
+        ${isRemovable ? `
+        <div class="delete-icon" title="Delete Category">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </div>` : ''}
+      </div>`;
+
+    // Default: Expand if it's a core category
+    if (['T-Shirts', 'Hoodies'].includes(name) && !isSub) {
+      li.classList.add('expanded');
+    }
+
+    const row = li.querySelector('.category-row');
+    const chevron = li.querySelector('.category-chevron-wrapper');
+
+    // 1. Chevron Click: Only Toggle Expansion
+    if (chevron) {
+      chevron.addEventListener('click', (e) => {
+        e.stopPropagation(); // Stop from hitting row selector
+        li.classList.toggle('expanded');
+      });
+    }
+
+    // 2. Row Click: Select AND Toggle Expansion
+    row.addEventListener('click', (e) => {
+      // Handle Unlinking / Deleting
+      if (e.target.closest('.delete-icon')) {
+        // ... (existing delete logic)
+        e.stopPropagation();
+        if (name.includes('(Linked)')) {
+          // Unlink Folder — Safe: only removes reference, never touches files
+          if (confirm(`Unlink folder "${name}"?`)) {
+            if (this.settings.linkedFolders) {
+              const displayName = name.replace(' (Linked)', '').replace(/ \(\d+\)$/, '').trim().toLowerCase();
+              this.settings.linkedFolders = this.settings.linkedFolders.filter(p => {
+                const baseName = p.replace(/\\/g, '/').split('/').pop().trim().toLowerCase();
+                return baseName !== displayName;
+              });
+              this.saveSettings();
+            }
+            this.loadLibraryData();
+          }
+        } else {
+          // Delete physical Category — confirm first
+          if (confirm(`Delete category "${name}" and all its mockups?`)) {
+            window.electronAPI.deleteLibraryCategory(name).then(success => {
+              if (success) this.loadLibraryData();
+            });
+          }
+        }
+        return;
+      }
+      
+      // If clicking chevron, it's already handled by its own listener
+      if (e.target.closest('.category-chevron-wrapper')) return;
+
+      e.stopPropagation();
+
+      // Reset Cloud Mode if navigating local categories
+      this._inCloudMode = false;
+      if (this.cloudFilterGroup) this.cloudFilterGroup.style.display = 'none';
+      if (this.librarySearch) this.librarySearch.placeholder = 'Search all mockups...';
+
+      // Update selection UI
+      const categoriesList = document.getElementById('library-categories');
+      if (categoriesList) {
+        categoriesList.querySelectorAll('.category-row').forEach(el => el.classList.remove('active'));
+      }
+      row.classList.add('active');
+
+      // Toggle expansion if it has children
+      if (hasFolders) {
+        li.classList.toggle('expanded');
+      }
+
+      // Render grid content: Show all files in category recursively
+      if (name === 'All Mockups') {
+        this.renderLibraryGrid(this.getAllMockups(this.libraryData), name);
+      } else {
+        const allCategoryFiles = [...(safeData.files || []), ...this.getAllMockups(safeData.folders)];
+        this.renderLibraryGrid(allCategoryFiles, name);
+      }
+    });
+
+    // Recursively add sub-folders if they exist
+    if (hasFolders) {
+      const subList = document.createElement('ul');
+      subList.className = 'sub-category-list';
+      Object.keys(safeData.folders).forEach(subName => {
+        subList.appendChild(this.createCategoryElement(subName, safeData.folders[subName], true));
+      });
+      li.appendChild(subList);
+    }
+
+    return li;
+  }
+
   renderLibraryGrid(items, categoryName) {
+    console.log(`Rendering grid for ${categoryName}, items:`, items?.length || 0);
     this.libraryGrid.innerHTML = '';
 
+    // Handle Search Filter
+    let displayItems = items || [];
+    if (this.librarySearch && this.librarySearch.value.trim() !== '') {
+      const query = this.librarySearch.value.toLowerCase();
+      displayItems = displayItems.filter(item => item.name.toLowerCase().includes(query));
+    }
+
+    // Update Count
+    if (this.libraryCountTag) {
+      this.libraryCountTag.textContent = `${displayItems.length} mockups`;
+    }
+
     // If items exist, render them. If not, we still want the "Add" button below.
-    if (items && Array.isArray(items) && items.length > 0) {
-      items.forEach(file => {
+    if (displayItems.length > 0) {
+      displayItems.forEach(file => {
         const el = document.createElement('div');
         el.className = 'library-item';
         if (this.selectedLibraryItems.has(file.path)) {
@@ -2464,12 +2938,32 @@ class RapidMockStudio {
         const safePath = file.path.replace(/\\/g, '/');
         const imgSrc = file.data ? file.data : `safe-file://${safePath}`;
 
+        // Create a professional name (Remove ext, replace _ and - with space)
+        const proName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+
         el.innerHTML = `
-          <img src="${imgSrc}" loading="lazy">
+          <img loading="lazy" style="opacity: 0; transition: opacity 0.2s ease;">
+          <div class="library-item-label">${proName}</div>
           <div class="library-item-delete" title="Delete Mockup">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
           </div>
         `;
+
+        const imgEl = el.querySelector('img');
+        
+        // Load instantly if it's an active base64 upload, else query OS thumbnail cache
+        if (file.data) {
+          imgEl.src = file.data;
+          imgEl.style.opacity = '1';
+        } else {
+          window.electronAPI.getThumbnail(file.path).then(thumbUrl => {
+            imgEl.src = thumbUrl || imgSrc; // Fallback to raw 8MB file if OS cache fails
+            imgEl.style.opacity = '1';
+          }).catch(() => {
+            imgEl.src = imgSrc;
+            imgEl.style.opacity = '1';
+          });
+        }
 
         // Click Handler: Toggle Selection
         el.addEventListener('click', (e) => {
@@ -2497,7 +2991,7 @@ class RapidMockStudio {
       });
     }
 
-    // Add "New Mockup" card at the end
+    // Add "New Mockup" card
     const addCard = document.createElement('div');
     addCard.className = 'library-item library-item-add';
     addCard.innerHTML = `
@@ -2563,6 +3057,42 @@ class RapidMockStudio {
       : 'Select multiple mockups to batch generate';
     footer.appendChild(hint);
 
+    // Actions Container
+    const actions = document.createElement('div');
+    actions.className = 'footer-actions';
+
+    // Link Folder Button
+    const btnLink = document.createElement('button');
+    btnLink.className = 'btn btn-secondary';
+    btnLink.style.width = 'auto';
+    btnLink.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+      </svg>
+      Link Local Folder
+    `;
+    btnLink.addEventListener('click', async () => {
+      try {
+        const result = await window.electronAPI.selectInputFolder();
+        if (result && result.path) {
+          if (!this.settings.linkedFolders) this.settings.linkedFolders = [];
+          const normalized = result.path.replace(/\\/g, '/');
+          if (!this.settings.linkedFolders.some(p => p.replace(/\\/g, '/') === normalized)) {
+            this.settings.linkedFolders.push(result.path);
+            this.saveSettings();
+            this.loadLibraryData();
+          } else {
+            alert('This folder is already linked to your library!');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to link:', err);
+        alert('Failed to link folder.');
+      }
+    });
+    actions.appendChild(btnLink);
+
     // Context Action Button
     const btnAction = document.createElement('button');
     btnAction.className = 'btn btn-primary';
@@ -2577,7 +3107,8 @@ class RapidMockStudio {
       btnAction.disabled = true;
     }
 
-    footer.appendChild(btnAction);
+    actions.appendChild(btnAction);
+    footer.appendChild(actions);
   }
 
   async confirmLibrarySelection() {
@@ -2806,9 +3337,314 @@ class RapidMockStudio {
     }
   }
 
+  // --- Cloud Store / Sync Logic ---
+  async openCloudStore() {
+    this._inCloudMode = true;
+
+    // 1. UI Updates — deselect sidebar
+    this.libraryCategories.querySelectorAll('li').forEach(el => {
+      el.classList.remove('active');
+      const row = el.querySelector('.category-row');
+      if (row) row.classList.remove('active');
+    });
+
+    // Toggle Header UI
+    if (this.cloudFilterGroup) this.cloudFilterGroup.style.display = 'flex';
+    if (this.librarySearch) {
+      this.librarySearch.placeholder = 'Search cloud mockups...';
+      this.librarySearch.value = '';
+    }
+
+    // Clear state
+    this._cloudFilter = 'all'; // Track active category filter
+    this._cloudSearch = '';     // Track active search text
+    this._cloudItems = [];      // Cache fetched items for instant filtering
+    if (this.librarySearch) this.librarySearch.value = '';
+    if (this.libraryCountTag) this.libraryCountTag.textContent = 'Fetching Cloud...';
+
+    // Show loading spinner
+    this.libraryGrid.innerHTML = `
+      <div style="grid-column: 1 / -1; width: 100%; height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-tertiary);">
+        <div class="spinner" style="border-color: rgba(0,0,0,0.1); border-top-color: var(--accent-color); margin-bottom: 20px;"></div>
+        <p style="margin: 0; font-weight: 500;">Connecting to Raven Cloud...</p>
+      </div>
+    `;
+
+    try {
+      // 2. Fetch Manifest (cache-busted)
+      const manifestUrl = `https://raw.githubusercontent.com/ArhamAshfaqft/RavenMockup-Cloud/main/mockups.json?t=${Date.now()}`;
+      const cloudData = await window.electronAPI.fetchCloudManifest(manifestUrl);
+
+      if (!cloudData || cloudData.error) {
+        throw new Error(cloudData?.error || 'Empty response from Cloud');
+      }
+      if (!Array.isArray(cloudData)) {
+        throw new Error('Invalid manifest format');
+      }
+
+      // 3. Compare with Local Library
+      const localFiles = this.getAllMockups(this.libraryData);
+      const localFileNames = new Set(localFiles.map(f => f.name.toLowerCase()));
+
+      this._cloudItems = cloudData.filter(item => {
+        if (!item || !item.file) return false;
+        const filename = item.file.split('/').pop().split('?')[0].toLowerCase();
+        return !localFileNames.has(filename);
+      });
+
+      this.renderCloudGrid();
+
+    } catch (err) {
+      console.error("Cloud Store Error:", err);
+      this.libraryGrid.innerHTML = `
+        <div style="grid-column: 1 / -1; width: 100%; height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-tertiary);">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 15px; color: #ff3b30;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <p style="font-weight: 500;">Failed to connect to Cloud Store.</p>
+          <p style="font-size: 12px; margin-top: 5px; max-width: 400px; text-align: center; color: var(--text-tertiary);">${err.message}</p>
+          <button class="btn btn-secondary" onclick="window.mockupApp.openCloudStore()" style="margin-top: 20px;">Try Again</button>
+        </div>
+      `;
+      if (this.libraryCountTag) this.libraryCountTag.textContent = 'Error';
+    }
+  }
+
+  renderCloudGrid() {
+    const allItems = this._cloudItems || [];
+    const activeFilter = this._cloudFilter || 'all';
+    this._cloudSearch = (this._cloudSearch || '').toLowerCase();
+
+    // Clear loading spinner if present before first render
+    if (this.libraryGrid.querySelector('.spinner')) {
+      this.libraryGrid.innerHTML = '';
+    }
+
+    // ── Filter items ──────────────────────────────
+    let filtered = allItems;
+    
+    // Category Filter
+    if (activeFilter !== 'all') {
+      filtered = filtered.filter(item => (item.category || 'Uncategorized') === activeFilter);
+    }
+    
+    // Search Filter
+    if (this._cloudSearch) {
+      filtered = filtered.filter(item => {
+        const filename = item.file.split('/').pop().split('?')[0].toLowerCase();
+        const proName = (item.name || filename).replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ").toLowerCase();
+        return proName.includes(this._cloudSearch) || (item.category || '').toLowerCase().includes(this._cloudSearch);
+      });
+    }
+
+    // ── Header UI Sync ──────────────────────────────
+    if (this.cloudFilterSelect) {
+      const categories = [...new Set(allItems.map(item => item.category || 'Uncategorized'))].sort();
+      
+      // Only rebuild if options changed or it's empty to avoid jitter
+      if (this.cloudFilterSelect.options.length <= 1 || categories.length !== (this.cloudFilterSelect.options.length - 1)) {
+        this.cloudFilterSelect.innerHTML = '';
+        const allOpt = document.createElement('option');
+        allOpt.value = 'all';
+        allOpt.textContent = `All (${allItems.length})`;
+        allOpt.selected = activeFilter === 'all';
+        this.cloudFilterSelect.appendChild(allOpt);
+
+        categories.forEach(cat => {
+          const count = allItems.filter(i => (i.category || 'Uncategorized') === cat).length;
+          const opt = document.createElement('option');
+          opt.value = cat;
+          opt.textContent = `${cat} (${count})`;
+          opt.selected = activeFilter === cat;
+          this.cloudFilterSelect.appendChild(opt);
+        });
+
+        // Add listener once
+        if (!this.cloudFilterSelect.hasListener) {
+          this.cloudFilterSelect.addEventListener('change', (e) => {
+            this._cloudFilter = e.target.value;
+            this.renderCloudGrid();
+          });
+          this.cloudFilterSelect.hasListener = true;
+        }
+      }
+    }
+
+    // ── Grid Container ────────────────────────
+    let cardsContainer = this.libraryGrid.querySelector('#cloud-cards-grid');
+    if (!cardsContainer) {
+      this.libraryGrid.innerHTML = ''; // Full reset if transitioning
+      cardsContainer = document.createElement('div');
+      cardsContainer.id = 'cloud-cards-grid';
+      cardsContainer.style.cssText = 'grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; width: 100%; padding: 20px 0;';
+      this.libraryGrid.appendChild(cardsContainer);
+    }
+    cardsContainer.innerHTML = '';
+
+    // Update count
+    if (this.libraryCountTag) {
+      this.libraryCountTag.textContent = `${filtered.length} mockups`;
+    }
+
+    // ── Empty State ──────────────────────────────────
+    if (filtered.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.style.cssText = 'grid-column: 1 / -1; width: 100%; height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-tertiary);';
+      if (allItems.length === 0) {
+        emptyEl.innerHTML = `
+          <div style="width: 48px; height: 48px; border-radius: 50%; background: rgba(52, 199, 89, 0.1); display: flex; align-items: center; justify-content: center; margin-bottom: 15px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34c759" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </div>
+          <p style="font-size: 16px; font-weight: 500; color: var(--text-primary); margin: 0 0 5px 0;">You're all caught up!</p>
+          <p style="margin: 0;">You have all the latest mockups installed.</p>
+        `;
+      } else {
+        emptyEl.innerHTML = `<p>No search results for "${this._cloudSearch}" in "${activeFilter}".</p>`;
+      }
+      cardsContainer.appendChild(emptyEl);
+      return;
+    }
+
+    // ── Render Cards ─────────────────────────────────
+    const cacheBuster = Date.now();
+    filtered.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'cloud-card';
+
+      const filename = item.file.split('/').pop().split('?')[0];
+      let previewUrl = item.thumb || item.file;
+      let imgSrc = previewUrl.startsWith('http') ? previewUrl : `file:///${previewUrl.replace(/\\/g, '/')}`;
+      if (imgSrc.startsWith('http')) {
+        imgSrc += (imgSrc.includes('?') ? '&' : '?') + `t=${cacheBuster}`;
+      }
+
+      const rawName = (item.name || filename).replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      const proName = rawName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+      const catLabel = item.category || 'Uncategorized';
+
+      el.innerHTML = `
+        <div class="cloud-preview">
+          <img src="${imgSrc}" loading="lazy" onerror="this.src=''; this.style.background='var(--border-light)';">
+          <div class="cloud-badge cloud-badge-new">NEW</div>
+        </div>
+        <div class="cloud-content">
+          <div class="cloud-category">${catLabel}</div>
+          <div class="cloud-title" title="${proName}">${proName}</div>
+          <button class="btn btn-primary btn-download-cloud">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Download
+          </button>
+        </div>
+      `;
+
+      // Download Click Logic
+      const btnObj = el.querySelector('.btn-download-cloud');
+      btnObj.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        btnObj.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; border-width: 2px; border-top-color: white;"></div> Downloading...`;
+        btnObj.disabled = true;
+
+        try {
+          const result = await window.electronAPI.downloadCloudMockup(item.file, item.category || 'T-Shirts', filename);
+
+          if (result && result.success) {
+            btnObj.style.background = 'var(--text-tertiary)';
+            btnObj.innerText = 'Installed';
+            btnObj.style.pointerEvents = 'none';
+
+            // Remove from cached list so it doesn't appear on next filter
+            this._cloudItems = this._cloudItems.filter(i => i.file !== item.file);
+
+            // Reload local library (auto-discovers new category folders)
+            setTimeout(() => {
+              this.loadLibraryData().then(() => {
+                const allTab = this.libraryCategories.querySelector('li[data-cat="all"]');
+                if (allTab) {
+                  const row = allTab.querySelector('.category-row');
+                  if (row) row.click();
+                }
+              });
+            }, 1000);
+          } else {
+            throw new Error(result?.error || 'Download failed');
+          }
+        } catch (downloadErr) {
+          console.error("Download Failed:", downloadErr);
+          btnObj.innerHTML = 'Retry';
+          btnObj.style.background = '#ff3b30';
+          btnObj.disabled = false;
+        }
+      });
+
+      cardsContainer.appendChild(el);
+    });
+  }
+
+  // ========================================================
+  //  Gumroad License Verification
+  // ========================================================
+  async checkLicense() {
+    try {
+      this.licenseModal.style.display = 'flex'; // Locked by default
+  
+      const savedKey = await window.electronAPI.getSavedLicense();
+  
+      if (savedKey) {
+        // Silent check on validation limits
+        const result = await window.electronAPI.verifyLicense(savedKey);
+        
+        // If it's valid, OR if they have a saved key but just happen to be offline right now, let them in.
+        // We only block them if the Gumroad API explicitly says "Invalid/Disabled/Refunded".
+        if (result.success || result.error === 'Network error verifying license.') {
+          this.licenseModal.style.display = 'none';
+          this.setupLicenseListener(); // still bind it in case they want to change keys later
+          return;
+        }
+      }
+      
+      this.setupLicenseListener();
+    } catch (err) {
+      console.error("License check err:", err);
+    }
+  }
+
+  setupLicenseListener() {
+    if (this._licenseListenerBound) return;
+    this._licenseListenerBound = true;
+
+    this.btnActivateLicense.addEventListener('click', async () => {
+      const key = this.inputLicenseKey.value.trim();
+      if (!key) return;
+
+      this.btnActivateLicense.disabled = true;
+      this.btnActivateLicense.textContent = 'Verifying...';
+      this.licenseErrorMessage.style.display = 'none';
+
+      const result = await window.electronAPI.verifyLicense(key);
+
+      if (result.success) {
+        this.licenseModal.style.display = 'none';
+        this.btnActivateLicense.textContent = 'Activate License';
+      } else {
+        this.licenseErrorMessage.textContent = result.error || 'Invalid License Key.';
+        this.licenseErrorMessage.style.display = 'block';
+        this.btnActivateLicense.disabled = false;
+        this.btnActivateLicense.textContent = 'Activate License';
+      }
+    });
+
+    // Press Enter to submit
+    this.inputLicenseKey.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        this.btnActivateLicense.click();
+      }
+    });
+  }
 }
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
-  window.mockupApp = new RapidMockStudio();
+  window.mockupApp = new RavenMockupStudio();
 });

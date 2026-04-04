@@ -1,22 +1,27 @@
 {
-  "name": "rapidmock-studio",
-  "version": "1.0.1",
-  "description": "Professional Offline Mockup Generator with Realistic Fabric Warping",
+  "name": "raven-mockup-studio",
+  "version": "1.0.2",
+  "description": "Raven Mockup Studio - Professional Offline Mockup Generator with Realistic Fabric Warping",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
+    "cloud": "node tools/cloud-manager/server.js",
     "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac"
+    "build:win": "npm run obfuscate && electron-builder --win",
+    "build:mac": "npm run obfuscate && electron-builder --mac",
+    "obfuscate": "node tools/obfuscate.js"
   },
   "build": {
-    "appId": "com.rapidmock.studio",
-    "productName": "Rapid Mockup Studio",
+    "appId": "com.ravenmock.studio",
+    "productName": "Raven Mockup Studio",
+    "extraMetadata": {
+      "main": "build-src/main/main.js"
+    },
     "directories": {
       "output": "dist"
     },
     "files": [
-      "src/**/*",
+      "build-src/**/*",
       "node_modules/**/*"
     ],
     "extraFiles": [
@@ -39,7 +44,7 @@
     "nsisWeb": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "appPackageUrl": "https://github.com/ArhamAshfaqft/RapidMockupStudio/releases/download/v${version}/",
+      "appPackageUrl": "https://github.com/ArhamAshfaqft/RavenMockupStudio/releases/download/v${version}/",
       "artifactName": "RMS-Web-Setup-${version}.${ext}"
     },
     "mac": {
@@ -55,13 +60,13 @@
       {
         "provider": "github",
         "owner": "ArhamAshfaqft",
-        "repo": "RapidMockupStudio"
+        "repo": "RavenMockupStudio"
       }
     ]
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ArhamAshfaqft/RapidMockupStudio.git"
+    "url": "https://github.com/ArhamAshfaqft/RavenMockupStudio.git"
   },
   "keywords": [
     "mockup",
@@ -74,9 +79,11 @@
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "javascript-obfuscator": "^5.4.1",
     "png-to-ico": "^3.0.1"
   },
   "dependencies": {
+    "electron-store": "^11.0.2",
     "electron-updater": "^6.7.3",
     "image-size": "^2.0.2",
     "pixi.js": "^7.3.2"

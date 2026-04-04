@@ -1,7 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
+
+let store;
+const GUMROAD_PERMALINK = 'rpmm'; // Change this to your actual Gumroad product permalink
 
 // --- Auto-Updater Config ---
 autoUpdater.autoDownload = false;
@@ -64,7 +67,10 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  const Store = (await import('electron-store')).default;
+  store = new Store();
+
   // Register custom protocol for local files
   protocol.registerFileProtocol('safe-file', (request, callback) => {
     const url = request.url.replace('safe-file://', '');
@@ -141,6 +147,175 @@ ipcMain.handle('start-download', () => {
 
 ipcMain.handle('quit-and-install', () => {
   autoUpdater.quitAndInstall();
+});
+
+ipcMain.handle('get-thumbnail', async (event, filePath) => {
+  try {
+    const normalizedPath = path.normalize(filePath);
+    const thumb = await nativeImage.createThumbnailFromPath(normalizedPath, { width: 400, height: 400 });
+    return thumb.toDataURL();
+  } catch (err) {
+    console.error('Error generating thumbnail:', err);
+    return null;
+  }
+});
+
+// --- Gumroad Licensing Handlers ---
+ipcMain.handle('get-saved-license', () => {
+  if (!app.isPackaged) return 'dev-license';
+  return store.get('gumroad_license_key') || null;
+});
+
+ipcMain.handle('verify-license', async (event, key) => {
+  if (!app.isPackaged) {
+    return { success: true, message: 'Dev Mode: License bypass active.' };
+  }
+  try {
+    const https = require('https');
+    const postData = JSON.stringify({
+      product_permalink: GUMROAD_PERMALINK,
+      license_key: key
+    });
+
+    const options = {
+      hostname: 'api.gumroad.com',
+      path: '/v2/licenses/verify',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+
+    return new Promise((resolve) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (result.success) {
+              // Valid key
+              store.set('gumroad_license_key', key);
+              if (result.uses !== undefined) store.set('gumroad_uses', result.uses);
+              resolve({ success: true, message: 'License verified successfully!' });
+            } else {
+              // Invalid key or expired
+              resolve({ success: false, error: result.message || 'Invalid license key.' });
+            }
+          } catch (e) {
+            resolve({ success: false, error: 'Failed to parse Gumroad API response.' });
+          }
+        });
+      });
+
+      req.on('error', (e) => {
+        resolve({ success: false, error: 'Network error verifying license.' });
+      });
+
+      req.write(postData);
+      req.end();
+    });
+
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// --- Cloud Library IPC Handlers ---
+ipcMain.handle('fetch-cloud-manifest', async (event, url) => {
+  try {
+    if (url.startsWith('file://')) {
+      const fs = require('fs');
+      let filePath = decodeURI(new URL(url).pathname);
+      if (process.platform === 'win32' && filePath.startsWith('/')) {
+        filePath = filePath.substring(1);
+      }
+      const data = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(data);
+    }
+    
+    const httpModule = url.startsWith('https') ? require('https') : require('http');
+    
+    // Parse URL to add cache-busting headers
+    const parsedUrl = new URL(url);
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      },
+      timeout: 10000 // 10 second timeout — prevents app hanging
+    };
+
+    return new Promise((resolve) => {
+      const req = httpModule.get(requestOptions, (res) => {
+        // Handle redirects (GitHub raw sometimes 301s)
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          const redirectReq = httpModule.get(res.headers.location, (res2) => {
+            let data = '';
+            res2.on('data', chunk => data += chunk);
+            res2.on('end', () => {
+              try { resolve(JSON.parse(data)); } catch (e) { resolve([]); }
+            });
+          });
+          redirectReq.on('error', err => resolve({ error: err.message }));
+          redirectReq.on('timeout', () => { redirectReq.destroy(); resolve({ error: 'Connection timed out (redirect)' }); });
+          return;
+        }
+        if (res.statusCode !== 200) {
+          resolve([]);
+          return;
+        }
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch (e) { resolve([]); }
+        });
+      });
+      req.on('error', err => resolve({ error: err.message }));
+      req.on('timeout', () => { req.destroy(); resolve({ error: 'Connection timed out. Please check your internet.' }); });
+    });
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('download-cloud-mockup', async (event, url, category, filename) => {
+  try {
+    const https = require('https');
+    const fs = require('fs');
+    
+    // Ensure category folder exists in the correct local portable Library path
+    const basePath = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve('.');
+    const categoryPath = path.join(basePath, 'Library', category);
+    if (!fs.existsSync(categoryPath)) {
+      fs.mkdirSync(categoryPath, { recursive: true });
+    }
+    
+    const savePath = path.join(categoryPath, filename);
+    const file = fs.createWriteStream(savePath);
+    
+    return new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        if (res.statusCode !== 200) {
+          resolve({ success: false, error: `Failed to download: ${res.statusCode}` });
+          return;
+        }
+        res.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve({ success: true, path: savePath });
+        });
+      }).on('error', (err) => {
+        fs.unlink(savePath, () => {});
+        resolve({ success: false, error: err.message });
+      });
+    });
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // Existing Handlers
@@ -268,39 +443,96 @@ ipcMain.handle('save-rendered-image', async (event, { filePath, dataBase64 }) =>
 });
 
 // Library Handlers
-ipcMain.handle('scan-library', async () => {
-  // Fix: Use path.resolve('.') for Dev mode to get absolute path (D:\...) instead of relative 'Library'
-  const basePath = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve('.');
-  const libraryPath = path.join(basePath, 'Library');
+ipcMain.handle('scan-library', async (event, linkedFolders = []) => {
+  try {
+    const basePath = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve('.');
+    const libraryPath = path.join(basePath, 'Library');
 
-  // Ensure Library exists
-  if (!fs.existsSync(libraryPath)) {
-    fs.mkdirSync(libraryPath);
+    if (!fs.existsSync(libraryPath)) {
+      fs.mkdirSync(libraryPath, { recursive: true });
+    }
+
+    const scan = (dir) => {
+      const structure = { folders: {}, files: [] };
+      if (!fs.existsSync(dir)) return structure;
+
+      const items = fs.readdirSync(dir);
+      for (const itemName of items) {
+        const fullPath = path.join(dir, itemName);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const sub = scan(fullPath);
+            // Only add folder if it has files OR subfolders with files
+            // SPECIAL CASE: Keep 'Mugs' if it's a top-level folder (per user request)
+            const hasContent = sub.files.length > 0 || Object.keys(sub.folders).length > 0;
+            const isMugs = itemName === 'Mugs' && dir === libraryPath;
+            
+            if (hasContent || isMugs) {
+              structure.folders[itemName] = sub;
+            }
+          } else if (stat.isFile() && /\.(png|jpe?g|webp|avif)$/i.test(itemName)) {
+            structure.files.push({
+              name: itemName,
+              path: fullPath.replace(/\\/g, '/')
+            });
+          }
+        } catch (e) {
+          console.error(`Error scanning ${fullPath}:`, e);
+        }
+      }
+      return structure;
+    };
+
+    const fullStructure = scan(libraryPath);
+
+    // Only ensure 'Universal' exists as a fallback
+    if (!fullStructure.folders['Universal']) {
+      const uniPath = path.join(libraryPath, 'Universal');
+      if (!fs.existsSync(uniPath)) fs.mkdirSync(uniPath, { recursive: true });
+      fullStructure.folders['Universal'] = { folders: {}, files: [] };
+    }
+
+    // Process Linked Folders
+    if (Array.isArray(linkedFolders)) {
+      for (const linkedPath of linkedFolders) {
+        try {
+          if (!fs.existsSync(linkedPath)) continue; // skip if deleted/disconnected
+          
+          const stat = fs.statSync(linkedPath);
+          if (!stat.isDirectory()) continue; // skip if it's not a directory
+          
+          // Scan the linked directory
+          const linkedStructure = scan(linkedPath);
+          
+          let folderName = path.basename(linkedPath);
+          
+          // Prevent name collision: if two linked dirs share basename, suffix (2), (3)...
+          let finalName = folderName + ' (Linked)';
+          let counter = 2;
+          while (fullStructure.folders[finalName]) {
+            finalName = folderName + ' (Linked) (' + counter + ')';
+            counter++;
+          }
+          
+          // ALWAYS add linked folders to structure so users get visual confirmation
+          fullStructure.folders[finalName] = linkedStructure;
+
+        } catch (linkErr) {
+          console.error(`Error scanning linked folder ${linkedPath}:`, linkErr);
+          // Skip this linked folder gracefully — don't crash the entire library scan
+        }
+      }
+    }
+
+    return { 
+      rootPath: libraryPath.replace(/\\/g, '/'), 
+      structure: fullStructure.folders 
+    };
+  } catch (err) {
+    console.error('CRITICAL Library Scan Error:', err);
+    return { structure: {} };
   }
-
-  // Ensure Universal category exists
-  const universalPath = path.join(libraryPath, 'Universal');
-  if (!fs.existsSync(universalPath)) {
-    fs.mkdirSync(universalPath);
-  }
-
-  const structure = {};
-  const categories = fs.readdirSync(libraryPath, { withFileTypes: true })
-    .filter(dirent => dirent.isDirectory())
-    .map(dirent => dirent.name);
-
-  for (const category of categories) {
-    const catPath = path.join(libraryPath, category);
-    const files = fs.readdirSync(catPath)
-      .filter(file => /\.(png|jpe?g)$/i.test(file))
-      .map(file => ({
-        name: file,
-        path: path.join(catPath, file) // Send absolute path
-      }));
-    structure[category] = files;
-  }
-
-  return { rootPath: libraryPath, structure };
 });
 
 ipcMain.handle('save-to-library', async (event, { category, filePath }) => {

@@ -5,8 +5,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: safe-file:;">
-  <title>Rapid Mockup Studio</title>
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: safe-file: https://raw.githubusercontent.com; connect-src 'self' https://raw.githubusercontent.com;">
+  <title>Raven Mockup Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -16,7 +19,7 @@
     <header class="app-header">
       <div class="logo">
         <img src="logo.png" alt="Logo" style="width: 28px; height: 28px; margin-right: 0px;">
-        <span>Rapid Mockup Studio</span>
+        <span>Raven Mockup Studio <span id="app-version" style="font-size: 11px; font-weight: 400; opacity: 0.5; margin-left: 6px;">v1.0.2</span></span>
       </div>
     </header>
 
@@ -53,8 +56,7 @@
                 </svg>
                 Upload Base
               </button>
-              <button class="btn btn-primary" id="btn-open-library"
-                style="background: var(--accent-color); color: white;">
+              <button class="btn btn-primary" id="btn-open-library">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                   <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
@@ -131,8 +133,7 @@
               </div>
               <div style="flex: 1;">
                 <label class="section-label">Height (px)</label>
-                <input type="text" id="custom-height-input" class="form-input" value="Auto" disabled
-                  style="opacity: 0.7; cursor: not-allowed;">
+                <input type="number" id="custom-height-input" class="form-input" placeholder="Auto" min="100" max="8000">
               </div>
             </div>
           </div>
@@ -146,17 +147,73 @@
               <p>Drag a design here or click to select</p>
             </div>
           </div>
+
+          <!-- Watermark Overlay -->
+          <div class="setup-section" id="step-5-container">
+            <div class="step-label-small">STEP 5</div>
+            <label class="section-label">Watermark Overlay (Optional)</label>
+            <p class="step-description">Add a persistent logo to all exports.</p>
+            
+            <div class="button-group" style="margin-bottom: 15px;">
+              <button class="btn btn-secondary" id="btn-load-watermark">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Upload Watermark
+              </button>
+              <button class="btn btn-secondary hidden" id="btn-clear-watermark" style="color: #ff3b30;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Clear
+              </button>
+            </div>
+
+            <!-- Watermark Controls (Hidden until loaded) -->
+            <div id="watermark-controls" class="hidden" style="margin-top: 10px; padding-top: 15px; border-top: 1px dashed var(--border-light);">
+              
+              <!-- Position -->
+              <div class="control-group" style="margin-bottom: 12px;">
+                <label class="control-label" style="font-size: 11px;">Alignment</label>
+                <select class="select" id="select-watermark-pos" style="padding: 6px 10px; font-size: 12px;">
+                  <option value="bottom-right">Bottom Right</option>
+                  <option value="bottom-left">Bottom Left</option>
+                  <option value="top-right">Top Right</option>
+                  <option value="top-left">Top Left</option>
+                  <option value="center">Center</option>
+                  <option value="tile">Tile Pattern</option>
+                </select>
+              </div>
+
+              <!-- Scale -->
+              <div class="control-group" style="margin-bottom: 12px;">
+                <div class="control-header">
+                  <label style="font-size: 11px;">Scale</label>
+                  <span class="control-value" id="watermark-scale-value">20%</span>
+                </div>
+                <input type="range" class="slider" id="slider-watermark-scale" min="5" max="100" value="20">
+              </div>
+
+              <!-- Opacity -->
+              <div class="control-group">
+                <div class="control-header">
+                  <label style="font-size: 11px;">Opacity</label>
+                  <span class="control-value" id="watermark-opacity-value">50%</span>
+                </div>
+                <input type="range" class="slider" id="slider-watermark-opacity" min="0" max="100" value="50">
+              </div>
+
+            </div>
+          </div>
         </div>
         <!-- Footer with Updater -->
         <footer class="panel-footer">
-          <div class="version-info">
-            <span id="app-version">Version 1.0.1</span>
-            <button id="btn-view-patch-notes" class="btn-text"
-              style="color: var(--accent-color); margin-left: 10px;">What's New?</button>
-            <span style="opacity: 0.3; margin: 0 5px;">|</span>
-            <button id="btn-check-update" class="btn-text">Check for Updates</button>
-          </div>
-
+          <button id="btn-view-patch-notes" class="btn-text">What's New?</button>
+          <span class="footer-divider">|</span>
+          <button id="btn-check-update" class="btn-text">Check for Updates</button>
         </footer>
       </aside>
 
@@ -223,20 +280,39 @@
           <div class="control-group">
             <div class="control-header">
               <label>Design Scale</label>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="control-value" id="scale-value">100%</span>
-                <button id="btn-auto-fit" title="Auto Fit & Center"
-                  style="padding: 2px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--border-color); border-radius: 4px; cursor: pointer; color: var(--text-secondary);">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <polyline points="9 21 3 21 3 15"></polyline>
-                    <line x1="21" y1="3" x2="14" y2="10"></line>
-                    <line x1="3" y1="21" x2="10" y2="14"></line>
-                  </svg>
-                </button>
-              </div>
+              <span class="control-value" id="scale-value">100%</span>
             </div>
             <input type="range" class="slider" id="slider-scale" min="10" max="200" value="100">
+          </div>
+
+          <!-- Alignment Tools -->
+          <div class="control-group">
+            <label style="margin-bottom: 10px; display: block;">Layout Alignment</label>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
+              <button id="btn-align-center-h" class="btn btn-secondary" title="Center Horizontal" style="padding: 8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 4v16M4 12h16M2 12h2M20 12h2"></path>
+                  <rect x="9" y="9" width="6" height="6" rx="1"></rect>
+                </svg>
+              </button>
+              <button id="btn-align-center-v" class="btn btn-secondary" title="Center Vertical" style="padding: 8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 12h16M12 4v16M12 2v2M12 20v2"></path>
+                  <rect x="9" y="9" width="6" height="6" rx="1"></rect>
+                </svg>
+              </button>
+              <button id="btn-align-fill" class="btn btn-secondary" title="Fill Width" style="padding: 8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M2 12h20M2 17l5-5-5-5M22 17l-5-5 5-5"></path>
+                </svg>
+              </button>
+              <button id="btn-transform-reset" class="btn btn-secondary" title="Reset All" style="padding: 8px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                  <path d="M3 3v5h5"></path>
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- Design Rotation -->
@@ -248,12 +324,12 @@
             <input type="range" class="slider" id="slider-rotation" min="-180" max="180" value="0">
           </div>
 
-          <!-- Blend Mode (Hidden - Managed by Smart Engine) -->
+          <!-- Blend Mode (Internal - Managed by Realism Engine) -->
           <div class="control-group" style="display: none;">
             <label class="control-label">Blend Mode</label>
             <select class="select" id="select-blend">
-              <option value="normal">Normal</option>
-              <option value="multiply" selected>Multiply</option>
+              <option value="normal">Normal (Opaque)</option>
+              <option value="multiply" selected>Multiply (Remove White BG)</option>
               <option value="darken">Darken</option>
               <option value="hard-light">Hard Light</option>
             </select>
@@ -330,6 +406,36 @@
     </main>
   </div>
 
+  <!-- LICENSE ACTIVATION MODAL -->
+  <div id="license-modal" class="modal-overlay" style="display: flex; z-index: 9999; background: rgba(0, 0, 0, 0.9);">
+    <div class="modal-content" style="max-width: 450px; height: auto;">
+      <div class="modal-header" style="justify-content: center;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px; color: var(--accent-color);">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <h3>License Activation</h3>
+      </div>
+      <div class="modal-body" style="padding: 24px;">
+        <p style="text-align: center; color: var(--text-secondary); margin-bottom: 20px; font-size: 14px;">
+          Please enter your Gumroad license key to unlock Raven Mockup Studio.
+        </p>
+        <div class="control-group">
+          <input type="text" id="input-license-key" class="input-text" placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+            style="width: 100%; padding: 12px; font-size: 14px; text-align: center; font-family: monospace; letter-spacing: 1px;">
+        </div>
+        <p id="license-error-message" style="color: #ff3b30; font-size: 12px; text-align: center; margin-top: 10px; display: none;">
+          Invalid License Key. Please try again.
+        </p>
+      </div>
+      <div class="modal-footer" style="justify-content: center;">
+        <button class="btn btn-primary" id="btn-activate-license" style="width: 100%;">
+          Activate License
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- MOCKUP LIBRARY MODAL -->
   <div id="library-modal" class="modal-overlay" style="display: none;">
     <div class="modal-content">
@@ -339,14 +445,35 @@
       </div>
       <div class="library-body">
         <!-- Sidebar -->
-        <div class="library-sidebar">
-          <ul id="library-categories">
+        <div class="library-sidebar" style="display: flex; flex-direction: column;">
+          <ul id="library-categories" style="flex: 1; overflow-y: auto;">
             <li class="active" data-cat="all">All</li>
           </ul>
+          <div style="padding: 15px; border-top: 1px solid var(--border-light);">
+            <button class="btn btn-cloud" id="btn-cloud-store" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; border: none; color: white;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 16.2A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 1 0 4 14.9"></path>
+                <path d="M12 12v9"></path>
+                <path d="m8 17 4 4 4-4"></path>
+              </svg>
+              Cloud Store
+            </button>
+          </div>
         </div>
         <!-- Grid -->
         <div class="library-grid-wrapper">
-          <div id="library-grid" class="library-grid">
+          <div class="library-header-row" id="library-header-row" style="padding: 12px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; gap: 15px; background: var(--bg-secondary);">
+            <div class="search-box" style="flex: 1; position: relative;">
+               <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+               <input type="text" id="library-search" placeholder="Search all mockups..." style="width: 100%; padding: 8px 12px 8px 32px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); font-size: 13px; outline: none; transition: border-color 0.2s;">
+            </div>
+            <!-- Cloud Store Unified Filters -->
+            <div id="cloud-filter-group" style="display: none; align-items: center; gap: 10px;">
+              <select id="cloud-filter-select" class="select" style="width: 160px; height: 32px; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border-light);"></select>
+            </div>
+            <div id="library-count-tag" style="font-size: 11px; color: var(--text-tertiary); font-weight: 500;">0 mockups</div>
+          </div>
+          <div id="library-grid" class="library-grid" style="padding: 20px;">
             <!-- Thumbnails injected here -->
           </div>
         </div>
@@ -440,7 +567,7 @@
   <div id="patch-notes-modal" class="modal-overlay" style="display: none; z-index: 3000;">
     <div class="modal-content" style="max-width: 500px; height: auto;">
       <div class="modal-header">
-        <h3>What's New in v1.0.1</h3>
+        <h3>What's New in v1.0.2</h3>
         <button id="btn-close-patch-notes" class="btn-icon">×</button>
       </div>
       <div class="modal-body" style="padding: 24px 30px;">
@@ -450,12 +577,13 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
             </svg>
-            New Features
+            Studio Expansion Update
           </h4>
           <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-primary);">
-            <li><strong>AVIF & WebP Support:</strong> You can now use <code>.avif</code> and <code>.webp</code> files
-              for both Mockups and Designs.</li>
-            <li><strong>Delete Key:</strong> Quickly remove designs using 'Delete' or 'Backspace'.</li>
+            <li><strong>Cloud Store:</strong> Browse and instantly download hundreds of new premium mockups directly inside the app.</li>
+            <li><strong>Brand Watermarks:</strong> Protect your brand with the new drag-and-drop watermark overlay system.</li>
+            <li><strong>Linked Folders:</strong> Link custom folders from your PC straight into the library sidebar without moving any files.</li>
+            <li><strong>Alignment Tools:</strong> Snap your designs to center or fill-width with new single-click action buttons.</li>
           </ul>
         </div>
 
@@ -468,10 +596,9 @@
             Improvements & Fixes
           </h4>
           <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-primary);">
-            <li><strong>Library Overlay Fixed:</strong> Resolved issue where designs loaded with a dark tint.</li>
-            <li><strong>Export Format Fixed:</strong> JPG selection now correctly exports as JPG.</li>
-            <li><strong>Drag & Drop:</strong> Improved reliability on the canvas.</li>
-            <li><strong>Stability:</strong> Enhanced error handling for corrupted files.</li>
+            <li><strong>Enhanced Realism:</strong> Upgraded rendering slider allowing for deeper shadows and stronger textures.</li>
+            <li><strong>Library Refinement:</strong> Categories reorganized into a flat, interactive sidebar for faster navigation.</li>
+            <li><strong>Expanded Content:</strong> Added high-demand categories including Jerseys, Baby Onesies, and Faceless Models.</li>
           </ul>
         </div>
 

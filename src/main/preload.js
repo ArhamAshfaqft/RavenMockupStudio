@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectSampleDesignFile: () => ipcRenderer.invoke('select-sample-design-file'),
   getDroppedFilePath: (path) => ipcRenderer.invoke('get-dropped-file-path', path),
   scanFolder: (path) => ipcRenderer.invoke('scan-folder', path),
-  scanLibrary: () => ipcRenderer.invoke('scan-library'),
+  scanLibrary: (linkedFolders) => ipcRenderer.invoke('scan-library', linkedFolders),
   saveToLibrary: (data) => ipcRenderer.invoke('save-to-library', data),
   selectInputFolder: () => ipcRenderer.invoke('select-input-folder'),
   selectOutputFolder: () => ipcRenderer.invoke('select-output-folder'),
@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteLibraryCategory: (name) => ipcRenderer.invoke('delete-library-category', name),
   deleteLibraryMockup: (filePath) => ipcRenderer.invoke('delete-library-mockup', filePath), // NEW
   openPathFolder: (path) => ipcRenderer.invoke('open-path-folder', path),
+  getThumbnail: (filePath) => ipcRenderer.invoke('get-thumbnail', filePath),
+  
+  // Cloud Library
+  fetchCloudManifest: (url) => ipcRenderer.invoke('fetch-cloud-manifest', url),
+  downloadCloudMockup: (url, category, filename) => ipcRenderer.invoke('download-cloud-mockup', url, category, filename),
+
+  // Gumroad Licensing
+  verifyLicense: (key) => ipcRenderer.invoke('verify-license', key),
+  getSavedLicense: () => ipcRenderer.invoke('get-saved-license'),
 
   // Auto-Updater
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

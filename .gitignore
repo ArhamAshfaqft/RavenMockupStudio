@@ -1,7 +1,15 @@
 node_modules/
 dist/
+build-src/
 *.log
 .DS_Store
 Thumbs.db
 
 Releases/
+latest.yml
+
+# Cloud Library (Local Folder Sync)
+RapidMockup-Cloud/
+RavenMockup-Cloud/
+cloud-config.json
+test_cloud_manifest.json
