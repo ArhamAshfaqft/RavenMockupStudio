@@ -463,12 +463,12 @@ ipcMain.handle('scan-library', async (event, linkedFolders = []) => {
           const stat = fs.statSync(fullPath);
           if (stat.isDirectory()) {
             const sub = scan(fullPath);
-            // Only add folder if it has files OR subfolders with files
-            // SPECIAL CASE: Keep 'Mugs' if it's a top-level folder (per user request)
             const hasContent = sub.files.length > 0 || Object.keys(sub.folders).length > 0;
-            const isMugs = itemName === 'Mugs' && dir === libraryPath;
+            // Always keep top-level folders so users can see newly created empty categories
+            // and have a drop target.
+            const isTopLevel = dir === libraryPath;
             
-            if (hasContent || isMugs) {
+            if (hasContent || isTopLevel) {
               structure.folders[itemName] = sub;
             }
           } else if (stat.isFile() && /\.(png|jpe?g|webp|avif)$/i.test(itemName)) {
