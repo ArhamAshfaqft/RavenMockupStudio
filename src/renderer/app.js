@@ -12,59 +12,81 @@
  * and Grey mockups, while completely ignoring soft global gradients (like Coffee Mugs)
  * so they don't tear in half.
  */
+// ═══════════════════════════════════════════════════════════════════
+// FabricMapFilter v2 — Adobe-Grade Directional Displacement Engine
+// ═══════════════════════════════════════════════════════════════════
+// Generates a proper displacement map where:
+//   R channel = horizontal (X) shift — wrinkles push design left/right
+//   G channel = vertical (Y) shift   — folds push design up/down
+//   0.5 (128) = neutral (no displacement)
+//
+// Uses multi-scale Sobel detection at 3 frequency octaves:
+//   Fine   (2px)  — tiny fabric threads and micro-creases
+//   Medium (6px)  — visible wrinkles and seams
+//   Coarse (16px) — deep garment folds and draping curves
+//
+// Each octave contributes independently weighted gradients so the
+// design conforms to every surface detail simultaneously.
+// ═══════════════════════════════════════════════════════════════════
 class FabricMapFilter extends PIXI.Filter {
     constructor(width, height) {
         const frag = `
+            precision highp float;
             varying vec2 vTextureCoord;
             uniform sampler2D uSampler;
             uniform vec2 texelSize;
-            
+
+            // Sample luminance at offset
+            float luma(vec2 uv) {
+                vec3 c = texture2D(uSampler, uv).rgb;
+                return dot(c, vec3(0.299, 0.587, 0.114));
+            }
+
+            // Sobel operator at a given radius — returns (dX, dY) gradients
+            vec2 sobel(vec2 uv, float r) {
+                float w = texelSize.x * r;
+                float h = texelSize.y * r;
+
+                // 3x3 Sobel neighborhood
+                float tl = luma(uv + vec2(-w, -h));
+                float tc = luma(uv + vec2( 0, -h));
+                float tr = luma(uv + vec2( w, -h));
+                float ml = luma(uv + vec2(-w,  0));
+                float mr = luma(uv + vec2( w,  0));
+                float bl = luma(uv + vec2(-w,  h));
+                float bc = luma(uv + vec2( 0,  h));
+                float br = luma(uv + vec2( w,  h));
+
+                // Sobel X: detects vertical edges → horizontal push
+                float gx = (tr + 2.0*mr + br) - (tl + 2.0*ml + bl);
+                // Sobel Y: detects horizontal edges → vertical push
+                float gy = (bl + 2.0*bc + br) - (tl + 2.0*tc + tr);
+
+                return vec2(gx, gy);
+            }
+
             void main() {
                 vec2 uv = vTextureCoord;
-                float w = texelSize.x;
-                float h = texelSize.y;
-                
-                vec3 lum = vec3(0.299, 0.587, 0.114);
-                float center = dot(texture2D(uSampler, uv).rgb, lum);
-                
-                // 16-tap sparse blur for local neighborhood average
-                float avg = center;
-                
-                // Inner ring
-                float d = 4.0;
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(0.0, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(0.0, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, 0.0)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, 0.0)).rgb, lum);
-                
-                // Outer ring (catches large, thick folds)
-                d = 12.0;
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(0.0, -h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(0.0, h*d)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(-w*d, 0.0)).rgb, lum);
-                avg += dot(texture2D(uSampler, uv + vec2(w*d, 0.0)).rgb, lum);
-                
-                avg /= 17.0;
-                
-                // High-pass: strictly isolate the fold's height.
-                float diff = center - avg;
-                
-                // Amplify the fold height naturally.
-                // 8.0 gives strong detection even on dark fabrics where fold luminance
-                // differences are tiny (~2%). Light fabrics simply clamp at 1.0 (no harm).
-                // The actual warp amount is controlled by the slider's power curve, not this.
-                float strength = 8.0;
-                float val = clamp(0.5 + (diff * strength), 0.0, 1.0);
-                
-                gl_FragColor = vec4(val, val, 1.0, 1.0);
+
+                // ── Multi-Scale Sobel Octaves ─────────────────────────
+                // Fine: micro threads, stitch lines, small creases
+                vec2 fine   = sobel(uv, 2.0)  * 5.0;
+                // Medium: visible wrinkles, seam ridges
+                vec2 medium = sobel(uv, 6.0)  * 3.5;
+                // Coarse: deep folds, draping, large fabric curves
+                vec2 coarse = sobel(uv, 16.0) * 2.0;
+
+                // ── Blend octaves with weighted sum ───────────────────
+                // Fine detail is strongest for realism (thread-level),
+                // coarse provides the "big shape" displacement
+                vec2 gradient = fine * 0.35 + medium * 0.40 + coarse * 0.25;
+
+                // ── Encode into 0-1 range centered at 0.5 ────────────
+                // PIXI DisplacementFilter: R=X shift, G=Y shift, 0.5=neutral
+                float rx = clamp(0.5 + gradient.x, 0.0, 1.0);
+                float gy = clamp(0.5 + gradient.y, 0.0, 1.0);
+
+                gl_FragColor = vec4(rx, gy, 0.5, 1.0);
             }
         `;
         super(null, frag);
@@ -90,6 +112,9 @@ class RavenMockupStudio {
     this.sampleDesignData = null;
     this.mockupQueue = []; // Queue for multi-mockup generation
     this.selectedLibraryItems = new Set(); // For UI selection state
+    this.mockupOverrides = {}; // Per-mockup PARTIAL overrides: { [path]: { overriddenKeys: Set, settings: {}, ... } }
+    this.activeQueueIndex = 0; // Which queue item is currently shown in canvas
+    this.globalSettings = null; // Snapshot of "master" settings at queue creation time
 
     // Design transform state
     this.designPosition = { x: 0.5, y: 0.4 }; // Normalized position (0-1)
@@ -138,6 +163,23 @@ class RavenMockupStudio {
     // Processing state
     this.isProcessing = false;
 
+    // Viewport State
+    this.zoomLevel = 1;
+    this.isPanning = false;
+    this.panStart = { x: 0, y: 0 };
+    
+    // Mask Tool State
+    this.isMaskMode = false;
+    this.maskToolMode = 'brush';
+    this.maskBrushSize = 30;
+    this.maskBrushMode = 'erase';
+    this.polygonPoints = [];
+    this.maskOperations = []; // Store operations {mode, size, path: [{x,y}]}
+
+    // Library State
+    this.favoriteMockups = new Set();
+    this.isLibraryMaximized = false;
+    
     // --- GLOBAL NATIVE DROP NEUTRALIZER ---
     // Prevents Electron Chromium from navigating to the image natively 
     // and generating a giant phantom image over the UI when dropped outside a safe zone.
@@ -167,6 +209,7 @@ class RavenMockupStudio {
     // Basic persistence to localStorage
     try {
       localStorage.setItem('ravenmock-settings', JSON.stringify(this.settings));
+      localStorage.setItem('ravenmock-favorites', JSON.stringify(Array.from(this.favoriteMockups)));
     } catch (e) { console.error("Failed to save settings", e); }
   }
 
@@ -178,6 +221,12 @@ class RavenMockupStudio {
         const parsed = JSON.parse(saved);
         this.settings = { ...this.settings, ...parsed };
       }
+
+      const savedFavorites = localStorage.getItem('ravenmock-favorites');
+      if (savedFavorites) {
+        this.favoriteMockups = new Set(JSON.parse(savedFavorites));
+      }
+
       // CRITICAL FIX: To prevent "Default Custom" bug reported by user,
       // we always start in 'original' mode on fresh app launch.
       this.settings.exportPreset = 'original';
@@ -301,6 +350,7 @@ class RavenMockupStudio {
     this.libraryGrid = document.getElementById('library-grid');
     this.librarySearch = document.getElementById('library-search');
     this.libraryCountTag = document.getElementById('library-count-tag');
+    this.btnMaximizeLibrary = document.getElementById('btn-maximize-library');
     this.btnConfirmLibrary = document.getElementById('btn-confirm-library');
     this.btnImportLibrary = document.getElementById('btn-import-library');
     this.btnCloudStore = document.getElementById('btn-cloud-store'); // Cloud Store Button
@@ -374,6 +424,28 @@ class RavenMockupStudio {
     this.tintControls = document.getElementById('tint-controls');
     this.inputMockupColor = document.getElementById('input-mockup-color');
     this.btnResetTint = document.getElementById('btn-reset-tint');
+
+    // Canvas Tools (Zoom & Mask)
+    this.btnToggleMask = document.getElementById('btn-toggle-mask');
+    this.maskControlsPanel = document.getElementById('mask-controls-panel');
+    this.selectBrushMode = document.getElementById('select-brush-mode');
+    this.sliderBrushSize = document.getElementById('slider-brush-size');
+    this.brushSizeVal = document.getElementById('brush-size-val');
+    this.btnClearMask = document.getElementById('btn-clear-mask');
+    this.selectMaskTool = document.getElementById('select-mask-tool');
+    this.brushSizeGroup = document.getElementById('brush-size-group');
+    this.canvasHintText = document.getElementById('canvas-hint-text');
+
+    this.btnZoomIn = document.getElementById('btn-zoom-in');
+    this.btnZoomOut = document.getElementById('btn-zoom-out');
+    this.btnZoomFit = document.getElementById('btn-zoom-fit');
+    this.labelZoomLevel = document.getElementById('label-zoom-level');
+
+    // Queue Off-Canvas
+    this.queueOffcanvas = document.getElementById('queue-offcanvas');
+    this.btnToggleQueue = document.getElementById('btn-toggle-queue');
+    this.queueThumbnails = document.getElementById('queue-thumbnails');
+    this.queueCount = document.getElementById('queue-count');
   }
 
   bindEvents() {
@@ -597,6 +669,109 @@ class RavenMockupStudio {
       }, 100);
     });
 
+    // Zoom & Pan Events
+    if (this.btnZoomIn) this.btnZoomIn.addEventListener('click', () => this.setZoom(this.zoomLevel + 0.25));
+    if (this.btnZoomOut) this.btnZoomOut.addEventListener('click', () => this.setZoom(this.zoomLevel - 0.25));
+    if (this.btnZoomFit) this.btnZoomFit.addEventListener('click', () => this.setZoom(1));
+
+    // Mask Tool Events
+    if (this.btnMaximizeLibrary) {
+      this.btnMaximizeLibrary.addEventListener('click', () => this.toggleLibraryMaximize());
+    }
+
+    if (this.btnToggleMask) {
+      this.btnToggleMask.addEventListener('click', () => {
+        this.isMaskMode = !this.isMaskMode;
+        this.btnToggleMask.classList.toggle('active', this.isMaskMode);
+        if (this.maskControlsPanel) {
+          this.maskControlsPanel.classList.toggle('visible', this.isMaskMode);
+        }
+        
+        // Disable design selection if masking
+        if (this.designSprite) {
+          this.designSprite.eventMode = this.isMaskMode ? 'none' : 'static';
+        }
+        
+        if (this.visualMaskSprite) {
+          this.visualMaskSprite.visible = this.isMaskMode;
+        }
+
+        this.drawSelectionUI(); // Hide UI when masking
+      });
+    }
+
+    if (this.selectBrushMode) {
+      this.selectBrushMode.addEventListener('change', (e) => {
+        this.maskBrushMode = e.target.value;
+      });
+    }
+
+    if (this.selectMaskTool) {
+      this.selectMaskTool.addEventListener('change', (e) => {
+        this.maskToolMode = e.target.value;
+        if (this.brushSizeGroup) {
+          this.brushSizeGroup.style.display = this.maskToolMode === 'polygon' ? 'none' : 'block';
+        }
+        
+        // Update hint text dynamically
+        if (this.canvasHintText) {
+          if (this.maskToolMode === 'polygon') {
+            this.canvasHintText.textContent = "Click to add points, hit Enter/DblClick to close. Esc to cancel";
+          } else {
+            this.canvasHintText.textContent = "Drag to position, Shift+drag to rotate, Scroll to resize, Ctrl+Scroll to zoom";
+          }
+        }
+        
+        // Reset current polygon draw
+        this.polygonPoints = [];
+        if (this.polygonPreviewGraphics) this.polygonPreviewGraphics.clear();
+      });
+    }
+
+    if (this.sliderBrushSize) {
+      this.sliderBrushSize.addEventListener('input', (e) => {
+        this.maskBrushSize = parseInt(e.target.value);
+        if (this.brushSizeVal) this.brushSizeVal.textContent = `${this.maskBrushSize}px`;
+      });
+    }
+
+    if (this.btnClearMask) {
+      this.btnClearMask.addEventListener('click', () => this.clearMockupMask());
+    }
+
+    // Queue Off-Canvas toggle
+    if (this.btnToggleQueue) {
+      this.btnToggleQueue.addEventListener('click', () => {
+        if (this.queueOffcanvas) {
+          this.queueOffcanvas.classList.toggle('open');
+        }
+      });
+    }
+
+    // Slider change → mark that specific property as overridden for this mockup
+    const markOverride = (key) => this.markSettingOverridden(key);
+    if (this.sliderOpacity) this.sliderOpacity.addEventListener('input', () => markOverride('opacity'));
+    if (this.sliderWarp) this.sliderWarp.addEventListener('input', () => markOverride('warpStrength'));
+    if (this.sliderScale) this.sliderScale.addEventListener('input', () => markOverride('scale'));
+    if (this.sliderRotation) this.sliderRotation.addEventListener('input', () => markOverride('rotation'));
+    if (this.sliderTexture) this.sliderTexture.addEventListener('input', () => markOverride('textureStrength'));
+    if (this.checkboxOverlay) this.checkboxOverlay.addEventListener('change', () => markOverride('showOverlay'));
+
+    // Keyboard Shortcuts (Nudge, Pan, Zoom)
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        this.isPanning = true;
+        this.canvasWrapper.style.cursor = 'grab';
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Space') {
+        this.isPanning = false;
+        this.canvasWrapper.style.cursor = 'default';
+      }
+    });
+
     // Keyboard Shortcuts (Nudge, Delete)
     window.addEventListener('keydown', (e) => {
       // Ignore if user is typing in an input
@@ -609,6 +784,20 @@ class RavenMockupStudio {
           e.preventDefault();
         }
         return;
+      }
+
+      // Polygon Tool complete or cancel
+      if (this.isMaskMode && this.maskToolMode === 'polygon') {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.commitPolygonMask();
+          return;
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          this.polygonPoints = [];
+          if (this.polygonPreviewGraphics) this.polygonPreviewGraphics.clear();
+          return;
+        }
       }
 
       // Only active if a design is selected or exists
@@ -694,37 +883,69 @@ class RavenMockupStudio {
     // NEW: Export Format Listener
     if (this.exportFormatSelect) {
       this.exportFormatSelect.addEventListener('change', (e) => {
-        this.settings.exportFormat = e.target.value;
+        const val = e.target.value;
+        this.settings.exportFormat = val;
+        
+        // CRITICAL SYNC: Update global baseline if queue exists
+        if (this.globalSettings) {
+          this.globalSettings.exportFormat = val;
+        }
+        
         this.saveSettings();
       });
     }
 
-    this.presetSelect.addEventListener('change', (e) => {
-      this.settings.exportPreset = e.target.value;
-      this.toggleCustomWidth();
-      this.saveSettings();
-    });
+    if (this.presetSelect) {
+      this.presetSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        this.settings.exportPreset = val;
+        
+        // CRITICAL SYNC: Update global baseline if queue exists
+        if (this.globalSettings) {
+          this.globalSettings.exportPreset = val;
+        }
+        
+        this.toggleCustomWidth();
+        this.saveSettings();
+      });
+    }
 
-    this.customWidthInput.addEventListener('change', (e) => {
-      let val = parseInt(e.target.value);
-      if (val < 100) val = 100;
-      if (val > 8000) val = 8000;
-      this.settings.customExportWidth = val;
-      this.saveSettings();
-      if (this.updateHeightDisplay) this.updateHeightDisplay();
-    });
-
-    this.customHeightInput.addEventListener('change', (e) => {
-      let val = parseInt(e.target.value);
-      if (isNaN(val)) {
-        this.settings.customExportHeight = null;
-      } else {
+    if (this.customWidthInput) {
+      this.customWidthInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value);
         if (val < 100) val = 100;
         if (val > 8000) val = 8000;
-        this.settings.customExportHeight = val;
-      }
-      this.saveSettings();
-    });
+        this.settings.customExportWidth = val;
+
+        // Sync to global
+        if (this.globalSettings) {
+          this.globalSettings.customExportWidth = val;
+        }
+
+        this.saveSettings();
+        if (this.updateHeightDisplay) this.updateHeightDisplay();
+      });
+    }
+
+    if (this.customHeightInput) {
+      this.customHeightInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value);
+        if (isNaN(val)) {
+          this.settings.customExportHeight = null;
+        } else {
+          if (val < 100) val = 100;
+          if (val > 8000) val = 8000;
+          this.settings.customExportHeight = val;
+        }
+
+        // Sync to global
+        if (this.globalSettings) {
+          this.globalSettings.customExportHeight = this.settings.customExportHeight;
+        }
+
+        this.saveSettings();
+      });
+    }
   }
 
   updateHeightDisplay() {
@@ -907,37 +1128,48 @@ class RavenMockupStudio {
   }
 
   async handleMockupDrop(files) {
-    const file = files[0];
-    // If it's a file path check via IPC (for robust validation)
-    if (file.path) {
-      const info = await window.electronAPI.getDroppedFilePath(file.path);
-      if (info && info.isFile && /\.(png|jpe?g|webp|avif)$/i.test(info.name)) {
-        // It's a valid image, load it using standard flow (we need to read file content)
-        // We can reuse selectMockupFile logic but we need to bypass dialog
-        // Actually, simplest is to read it here or reload via IPC
-        // Ideally main process 'select-mockup-file' is tied to dialog. 
-        // Let's create a direct loader or just read it here manually for now since we have path 
-        // But wait, 'select-mockup-file' returns data object. 
-        // Let's add 'load-mockup-file' to main.js? Or just read it rendering side?
-        // Rendering side FileReader is fine for preview.
-        // BUT App expects this.mockupData structure {name, path, data}
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          // FIX: Clear any previous batch queue
-          this.mockupQueue = [];
+    if (!files || files.length === 0) return;
 
-          this.mockupData = {
-            name: info.name,
-            path: info.path,
-            data: e.target.result
+    const validFiles = [];
+    const readPromises = Array.from(files).map(file => {
+      return new Promise(async (resolve) => {
+        if (!file.path) return resolve(null);
+        
+        const info = await window.electronAPI.getDroppedFilePath(file.path);
+        if (info && info.isFile && /\.(png|jpe?g|webp|avif)$/i.test(info.name)) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve({
+              name: info.name,
+              path: info.path,
+              data: e.target.result
+            });
           };
-          this.mockupInfo.textContent = info.name;
-          this.resetMockupSettings(); // Reset Tint
+          reader.readAsDataURL(file);
+        } else {
+          resolve(null);
+        }
+      });
+    });
 
-          this.initPixiApp();
-        };
-        reader.readAsDataURL(file);
+    const results = (await Promise.all(readPromises)).filter(r => r !== null);
+    
+    if (results.length > 0) {
+      // Replace batch queue with all dropped bases
+      this.mockupQueue = results;
+      this.activeQueueIndex = 0;
+      this.mockupData = results[0];
+      
+      this.resetMockupSettings(); // Reset Tint
+      
+      if (results.length === 1) {
+        this.mockupInfo.textContent = results[0].name;
+      } else {
+        this.mockupInfo.textContent = `${results.length} Bases Loaded`;
       }
+      
+      this.populateQueuePanel();
+      this.initPixiApp();
     }
   }
 
@@ -1160,15 +1392,23 @@ class RavenMockupStudio {
   }
 
   async loadMockup() {
-    const result = await window.electronAPI.selectMockupFile();
-    if (result) {
-      // FIX: Clear any previous batch queue from Library
-      this.mockupQueue = [];
+    const results = await window.electronAPI.selectMockupFile();
+    if (results && results.length > 0) {
+      // FIX: Replace batch queue with all manually selected bases
+      this.mockupQueue = results;
 
       this.resetMockupSettings(); // Reset Tint
 
-      this.mockupData = result;
-      this.mockupInfo.textContent = result.name;
+      this.mockupData = results[0];
+      if (results.length === 1) {
+        this.mockupInfo.textContent = results[0].name;
+      } else {
+        this.mockupInfo.textContent = `${results.length} Bases Loaded`;
+      }
+      
+      this.activeQueueIndex = 0;
+      this.populateQueuePanel();
+      
       this.initPixiApp();
     }
   }
@@ -1461,21 +1701,21 @@ class RavenMockupStudio {
       this.background.tint = this.settings.mockupColor;
     }
 
-    // --- SMART DISPLACEMENT ENGINE ---
+    // --- ADOBE-GRADE DISPLACEMENT ENGINE v2 ---
     // We must render the filters to a Texture! PIXI.DisplacementFilter ignores the .filters
     // array on its target sprite and reads the raw base texture instead.
     const tempSprite = new PIXI.Sprite(mockupTexture);
     tempSprite.width = this.app.screen.width;
     tempSprite.height = this.app.screen.height;
 
-    // Use Advanced Fabric Mapping logic to adaptively detect folds
-    // This perfectly extracts wrinkles regardless of if the shirt is white, black, or grey.
+    // FabricMapFilter v2: Multi-scale directional Sobel with separate X/Y channels
     const fabricFilter = new FabricMapFilter(this.app.screen.width, this.app.screen.height);
 
-    // Apply a light blur to smooth the raw pixel threads so the maps stays clean
+    // Light blur to smooth out pixel noise without killing wrinkle directionality
+    // Lower than v1 (was 6) because the multi-scale shader already handles smoothing internally
     const blurFilter = new PIXI.filters.BlurFilter();
-    blurFilter.quality = 6;
-    blurFilter.blur = 6; 
+    blurFilter.quality = 4;
+    blurFilter.blur = 3;
 
     tempSprite.filters = [fabricFilter, blurFilter];
 
@@ -1554,6 +1794,40 @@ class RavenMockupStudio {
     this.app.stage.addChild(this.displacementSprite);
 
     this.app.stage.addChild(this.designContainer);
+
+    // --- MASK SYSTEM ---
+    this.maskTexture = PIXI.RenderTexture.create({
+      width: this.app.screen.width,
+      height: this.app.screen.height,
+      resolution: 1
+    });
+    this.visualMaskTexture = PIXI.RenderTexture.create({
+      width: this.app.screen.width,
+      height: this.app.screen.height,
+      resolution: 1
+    });
+    const bgRect = new PIXI.Graphics();
+    bgRect.beginFill(0xFFFFFF);
+    bgRect.drawRect(0, 0, this.app.screen.width, this.app.screen.height);
+    bgRect.endFill();
+    this.app.renderer.render(bgRect, { renderTexture: this.maskTexture });
+
+    this.maskSprite = new PIXI.Sprite(this.maskTexture);
+    this.maskSprite.renderable = false; // Important: hide the literal white sprite
+    this.app.stage.addChild(this.maskSprite);
+
+    this.visualMaskSprite = new PIXI.Sprite(this.visualMaskTexture);
+    this.visualMaskSprite.alpha = 0.6; // Higher contrast red overlay
+    this.visualMaskSprite.visible = false; // Hidden by default until Mask tool is active
+    // We defer adding this until uiContainer is created so it sits on top
+    
+    // Apply Mask to Design ONLY (so background/shadows aren't erased)
+    this.designContainer.mask = this.maskSprite;
+    
+    this.maskOperations = []; // Reset ops for new mockup
+    this.brushGraphics = new PIXI.Graphics();
+    // --- END MASK SYSTEM ---
+
     this.app.stage.addChild(this.shadowLayer);
     this.app.stage.addChild(this.textureLayer); // NEW: Add texture layer
     this.app.stage.addChild(this.highlightLayer);
@@ -1571,6 +1845,15 @@ class RavenMockupStudio {
 
     this.app.stage.addChild(this.uiContainer);
 
+    // FIX: Add visualMaskSprite to uiContainer so it is guaranteed on top of Shadows/Textures
+    if (this.visualMaskSprite) {
+      this.uiContainer.addChild(this.visualMaskSprite);
+    }
+    
+    // Polygon Preview (above visualMask)
+    this.polygonPreviewGraphics = new PIXI.Graphics();
+    this.uiContainer.addChild(this.polygonPreviewGraphics);
+
     this.updateLighting();
 
     // FIX: Initialize interactions for the new canvas
@@ -1579,6 +1862,18 @@ class RavenMockupStudio {
     // FIX: Persist design across mockup switches
     if (this.pendingDesignUrl) {
       this.loadDesignToCanvas(this.pendingDesignUrl, false); // Existing Design = False
+    }
+
+    // FIX (v2): Apply pending mockup state AFTER canvas is fully ready
+    // This replaces the old setTimeout(300) race condition that caused
+    // design position to be lost on slow image loads.
+    if (this._pendingMockupState) {
+      const state = this._pendingMockupState;
+      this._pendingMockupState = null;
+      // Use requestAnimationFrame to ensure PIXI has rendered the first frame
+      requestAnimationFrame(() => {
+        this.applyMockupState(state);
+      });
     }
   }
 
@@ -1719,20 +2014,19 @@ class RavenMockupStudio {
     this.baseDesignWidth = targetWidth;
     this.baseDesignHeight = targetWidth / aspectRatio;
 
+    // Removed: We no longer reset position to 0.5/0.5 for new designs.
+    // This allows users to set a position on Mockup 1, and drop new designs into 
+    // that exact same chest spot without losing their alignment work.
+    
+    // We still want to update the UI sliders to ensure they match internal state
     if (isNewDesign) {
-      // Reset to Center (True Center) for new designs
-      this.designPosition = { x: 0.5, y: 0.5 };
-      this.designScale = 1.0;
-      this.designRotation = 0;
-
-      // Update UI Sliders
       if (this.sliderScale) {
-        this.sliderScale.value = 100;
-        this.scaleValue.textContent = "100%";
+        this.sliderScale.value = Math.round(this.designScale * 100);
+        this.scaleValue.textContent = `${Math.round(this.designScale * 100)}%`;
       }
       if (this.sliderRotation) {
-        this.sliderRotation.value = 0;
-        this.rotationValue.textContent = "0°";
+        this.sliderRotation.value = this.designRotation;
+        this.rotationValue.textContent = `${this.designRotation}°`;
       }
     }
 
@@ -1855,18 +2149,18 @@ class RavenMockupStudio {
   }
   /**
    * Convert slider value (0-100) to a smooth displacement pixel offset.
-   * Uses a power curve so that:
+   * v2 Tuning: Gentler curve with higher ceiling for directional map.
    *   0  -> 0px   (no warp)
-   *   3  -> ~6px  (subtle, professional baseline)
-   *   15 -> ~30px (medium wrap — visible on hoodies)
-   *   50 -> ~70px (heavy — deep wrinkles)
-   *  100 -> ~120px (maximum — extreme fabric pull, no tearing)
+   *   3  -> ~3px  (barely visible — subtle fabric breathing)
+   *   10 -> ~18px (clean professional baseline)
+   *   25 -> ~55px (medium — visible wrinkle conformance)
+   *   50 -> ~93px (heavy — deep fold tracking)
+   *  100 -> ~140px (maximum — extreme fabric pull)
    */
   _computeDisplacementScale(sliderValue) {
-    // Normalize 0-100 to 0-1, apply power curve, then scale to max pixels
     const t = sliderValue / 100;
-    const maxDisplacement = 120; // Maximum pixel offset at slider=100
-    return Math.pow(t, 1.5) * maxDisplacement;
+    const maxDisplacement = 140;
+    return Math.pow(t, 1.8) * maxDisplacement;
   }
 
   updateDisplacement() {
@@ -2197,6 +2491,145 @@ class RavenMockupStudio {
     }
   }
 
+  setZoom(level, mouseX, mouseY) {
+    if (!this.app || !this.app.stage) return;
+    
+    // Width and height of the canvas screen area
+    const width = this.canvasWrapper.clientWidth || 800;
+    const height = this.canvasWrapper.clientHeight || 800;
+
+    // Use center of screen if no mouse coordinates are given (e.g. from UI buttons)
+    if (mouseX === undefined) mouseX = width / 2;
+    if (mouseY === undefined) mouseY = height / 2;
+
+    const oldScale = this.app.stage.scale.x;
+    let newScale = Math.max(0.1, Math.min(10, level));
+    this.zoomLevel = newScale;
+
+    if (this.labelZoomLevel) this.labelZoomLevel.textContent = `${Math.round(newScale * 100)}%`;
+
+    // The point in the world space under the mouse currently
+    const worldX = (mouseX - this.app.stage.position.x) / oldScale;
+    const worldY = (mouseY - this.app.stage.position.y) / oldScale;
+
+    // Apply new scale
+    this.app.stage.scale.set(newScale);
+
+    // Reposition stage so the same world point is under the mouse
+    if (newScale === 1 && mouseX === width / 2 && mouseY === height / 2) {
+      // Direct reset constraint to zero out pan drifting
+      this.app.stage.position.set(0, 0);
+    } else {
+      const newX = mouseX - worldX * newScale;
+      const newY = mouseY - worldY * newScale;
+      this.app.stage.position.set(newX, newY);
+    }
+  }
+
+  drawMaskBrush(x, y, isStart) {
+    if (!this.brushGraphics || !this.maskTexture || !this.app) return;
+    
+    const size = this.maskBrushSize / this.app.stage.scale.x; // Scale brush visually
+    
+    // Store for high-res batch replay
+    this.maskOperations.push({ x, y, size, mode: this.maskBrushMode });
+
+    this.brushGraphics.clear();
+    this.brushGraphics.beginFill(0xFFFFFF); // Color doesn't matter for erase blend mode if using ERASE, but wait
+    
+    // In Pixi, BLEND_MODES.ERASE creates transparency
+    // To restore, we draw opaque white with NORMAL blend mode
+    this.brushGraphics.blendMode = this.maskBrushMode === 'erase' ? PIXI.BLEND_MODES.ERASE : PIXI.BLEND_MODES.NORMAL;
+    
+    // Draw circle brush
+    this.brushGraphics.drawCircle(x, y, size);
+    this.brushGraphics.endFill();
+    
+    // Render the brush stroke onto the mask texture without clearing the previous content
+    this.app.renderer.render(this.brushGraphics, { renderTexture: this.maskTexture, clear: false });
+
+    // Render Red visual overlay to visualMaskTexture
+    if (this.visualMaskTexture) {
+      this.brushGraphics.clear();
+      this.brushGraphics.beginFill(0xFF0000); // Red dot for erased areas
+      // If erasing design, we ADD red to the visual layer. If restoring, we ERASE red.
+      this.brushGraphics.blendMode = this.maskBrushMode === 'erase' ? PIXI.BLEND_MODES.NORMAL : PIXI.BLEND_MODES.ERASE;
+      this.brushGraphics.drawCircle(x, y, size);
+      this.brushGraphics.endFill();
+      this.app.renderer.render(this.brushGraphics, { renderTexture: this.visualMaskTexture, clear: false });
+    }
+  }
+
+  updatePolygonPreview(currentX, currentY) {
+    if (!this.polygonPreviewGraphics || this.polygonPoints.length === 0) return;
+    
+    this.polygonPreviewGraphics.clear();
+    
+    const color = this.maskBrushMode === 'erase' ? 0xff0000 : 0x00ff00;
+    this.polygonPreviewGraphics.lineStyle(2 / this.app.stage.scale.x, color, 1);
+    
+    this.polygonPreviewGraphics.moveTo(this.polygonPoints[0].x, this.polygonPoints[0].y);
+    
+    for (let i = 1; i < this.polygonPoints.length; i++) {
+      this.polygonPreviewGraphics.lineTo(this.polygonPoints[i].x, this.polygonPoints[i].y);
+    }
+    
+    if (currentX !== undefined && currentY !== undefined) {
+      this.polygonPreviewGraphics.lineTo(currentX, currentY);
+    }
+  }
+
+  commitPolygonMask() {
+    if (!this.polygonPoints || this.polygonPoints.length < 3) {
+      this.polygonPoints = [];
+      if (this.polygonPreviewGraphics) this.polygonPreviewGraphics.clear();
+      return;
+    }
+    
+    this.maskOperations.push({ 
+      type: 'polygon', 
+      points: this.polygonPoints.map(p => ({ x: p.x, y: p.y })), 
+      mode: this.maskBrushMode 
+    });
+
+    this.brushGraphics.clear();
+    this.brushGraphics.beginFill(0xFFFFFF); 
+    this.brushGraphics.blendMode = this.maskBrushMode === 'erase' ? PIXI.BLEND_MODES.ERASE : PIXI.BLEND_MODES.NORMAL;
+    this.brushGraphics.drawPolygon(this.polygonPoints);
+    this.brushGraphics.endFill();
+    this.app.renderer.render(this.brushGraphics, { renderTexture: this.maskTexture, clear: false });
+
+    if (this.visualMaskTexture) {
+      this.brushGraphics.clear();
+      this.brushGraphics.beginFill(0xFF0000); 
+      this.brushGraphics.blendMode = this.maskBrushMode === 'erase' ? PIXI.BLEND_MODES.NORMAL : PIXI.BLEND_MODES.ERASE;
+      this.brushGraphics.drawPolygon(this.polygonPoints);
+      this.brushGraphics.endFill();
+      this.app.renderer.render(this.brushGraphics, { renderTexture: this.visualMaskTexture, clear: false });
+    }
+    
+    this.polygonPoints = [];
+    if (this.polygonPreviewGraphics) this.polygonPreviewGraphics.clear();
+  }
+
+  clearMockupMask() {
+    if (!this.maskTexture || !this.app) return;
+    this.maskOperations = []; // Clear for batch export
+    // Fill the mask texture with solid white to fully restore design
+    this.brushGraphics.clear();
+    this.brushGraphics.beginFill(0xFFFFFF);
+    this.brushGraphics.blendMode = PIXI.BLEND_MODES.NORMAL;
+    this.brushGraphics.drawRect(0, 0, this.app.screen.width, this.app.screen.height);
+    this.brushGraphics.endFill();
+    this.app.renderer.render(this.brushGraphics, { renderTexture: this.maskTexture, clear: true });
+
+    if (this.visualMaskTexture) {
+      // Clear visual overlay
+      this.brushGraphics.clear();
+      this.app.renderer.render(this.brushGraphics, { renderTexture: this.visualMaskTexture, clear: true });
+    }
+  }
+
   setupInteraction() {
     if (this.interactionsBound) return; // Prevent duplicate listeners
     this.interactionsBound = true;
@@ -2211,11 +2644,52 @@ class RavenMockupStudio {
     };
 
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.designSprite) return;
-
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Handle Pan Mode (Spacebar, Middle Click, Right Click, or holding Ctrl)
+      if (this.isPanning || e.button === 1 || e.button === 2 || e.ctrlKey || e.metaKey) {
+        this.interactionState = { 
+          mode: 'pan', 
+          startX: e.clientX, 
+          startY: e.clientY, 
+          initStageX: this.app.stage.position.x, 
+          initStageY: this.app.stage.position.y 
+        };
+        return;
+      }
+
+      // Handle Mask Mode Tools
+      if (this.isMaskMode) {
+        // Convert screen to stage coordinates
+        const stageX = (mouseX - this.app.stage.position.x) / this.app.stage.scale.x;
+        const stageY = (mouseY - this.app.stage.position.y) / this.app.stage.scale.y;
+        
+        if (this.maskToolMode === 'brush') {
+          this.isBrushing = true;
+          this.drawMaskBrush(stageX, stageY, true);
+        } else if (this.maskToolMode === 'polygon') {
+          // Check if clicking near start to close
+          if (this.polygonPoints.length > 2) {
+            const first = this.polygonPoints[0];
+            const dist = Math.hypot(first.x - stageX, first.y - stageY);
+            if (dist < 20 / this.app.stage.scale.x) {
+              this.commitPolygonMask();
+              return;
+            }
+          }
+          this.polygonPoints.push(new PIXI.Point(stageX, stageY));
+          this.updatePolygonPreview(stageX, stageY);
+        }
+        return;
+      }
+
+      // Convert screen coordinates to world (zoomed) coordinates for hit math
+      const x = (mouseX - this.app.stage.position.x) / this.app.stage.scale.x;
+      const y = (mouseY - this.app.stage.position.y) / this.app.stage.scale.y;
+
+      if (!this.designSprite) return;
 
       // 1. CROP HANDLES (Priority if Cropping)
       if (this.isCropping && this.cropHandles) {
@@ -2320,8 +2794,79 @@ class RavenMockupStudio {
 
     canvas.addEventListener('mousemove', (e) => {
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (this.interactionState.mode === 'pan') {
+        const dx = e.clientX - this.interactionState.startX;
+        const dy = e.clientY - this.interactionState.startY;
+        this.app.stage.position.set(
+          this.interactionState.initStageX + dx,
+          this.interactionState.initStageY + dy
+        );
+        return;
+      }
+
+      if (this.isMaskMode) {
+        // Init cursor if missing
+        if (!this.cursorGraphics) {
+          this.cursorGraphics = new PIXI.Graphics();
+          this.cursorGraphics.eventMode = 'none'; // click through
+          this.uiContainer.addChild(this.cursorGraphics);
+        }
+
+        // Ensure cursor stays on top
+        if (this.cursorGraphics && this.cursorGraphics.parent) {
+          this.cursorGraphics.parent.addChild(this.cursorGraphics);
+        }
+        // Ensure visual overlay is rendered below cursor but above everything
+        if (this.visualMaskSprite && this.visualMaskSprite.parent) {
+           this.visualMaskSprite.parent.addChild(this.visualMaskSprite);
+        }
+        if (this.polygonPreviewGraphics && this.polygonPreviewGraphics.parent) {
+           this.polygonPreviewGraphics.parent.addChild(this.polygonPreviewGraphics);
+        }
+
+        // Calculate location in world coordinates
+        const stageX = (mouseX - this.app.stage.position.x) / this.app.stage.scale.x;
+        const stageY = (mouseY - this.app.stage.position.y) / this.app.stage.scale.y;
+
+        if (this.maskToolMode === 'brush') {
+          this.canvasWrapper.style.cursor = 'none';
+          const size = this.maskBrushSize / this.app.stage.scale.x;
+          
+          // Draw the ring
+          this.cursorGraphics.clear();
+          // Red brush for erase, green for restore
+          const color = this.maskBrushMode === 'erase' ? 0xff0000 : 0x00ff00;
+          this.cursorGraphics.lineStyle(2 / this.app.stage.scale.x, color, 0.8);
+          this.cursorGraphics.drawCircle(stageX, stageY, size);
+          this.cursorGraphics.visible = true;
+
+          if (this.isBrushing) {
+            this.drawMaskBrush(stageX, stageY, false);
+          }
+        } else if (this.maskToolMode === 'polygon') {
+          this.cursorGraphics.visible = false;
+          this.canvasWrapper.style.cursor = 'crosshair';
+          
+          if (this.polygonPoints.length > 0) {
+             this.updatePolygonPreview(stageX, stageY);
+          }
+        }
+        return;
+      } else {
+        if (this.cursorGraphics) this.cursorGraphics.visible = false;
+        
+        // Restore cursor
+        if (!this.isPanning && this.interactionState.mode === 'none' && !e.ctrlKey && !e.metaKey) {
+          this.canvasWrapper.style.cursor = 'default';
+        }
+      }
+
+      // Convert screen coordinates to world computations just like mousedown
+      const x = (mouseX - this.app.stage.position.x) / this.app.stage.scale.x;
+      const y = (mouseY - this.app.stage.position.y) / this.app.stage.scale.y;
 
       if (this.interactionState.mode === 'crop_resize') {
         // --- CROP RESIZING LOGIC ---
@@ -2454,7 +2999,31 @@ class RavenMockupStudio {
       }
     });
 
-    const endDrag = () => {
+    const endDrag = (e) => {
+      // If leaving canvas, forcibly restore cursor
+      if (e.type === 'mouseleave') {
+        this.canvasWrapper.style.cursor = 'default';
+        if (this.cursorGraphics) this.cursorGraphics.visible = false;
+      }
+
+      if (this.interactionState.mode === 'pan') {
+        // Stop panning but keep position
+      }
+      if (this.isMaskMode && this.isBrushing) {
+        this.isBrushing = false;
+        // Don't change interaction state so we stay in mask mode
+      }
+
+      // Mark explicit overrides so Elementor-style inheritance tracks spatial changes
+      const mode = this.interactionState.mode;
+      if (mode === 'drag') {
+        this.markSettingOverridden('position');
+      } else if (mode === 'resize') {
+        this.markSettingOverridden('scale');
+      } else if (mode === 'rotate') {
+        this.markSettingOverridden('rotation');
+      }
+
       this.interactionState = { mode: 'none' };
       if (this.guideGraphics) this.guideGraphics.clear(); // Clear guides on drop
     };
@@ -2462,21 +3031,39 @@ class RavenMockupStudio {
     canvas.addEventListener('mouseup', endDrag);
     canvas.addEventListener('mouseleave', endDrag);
 
-    // Scroll to resize
+    // Disable right click menu
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Scroll to resize or Zoom
     canvas.addEventListener('wheel', (e) => {
-      if (!this.designSprite) return;
+      // Prevent browser scroll bounding box jump while user scrolls on canvas
       e.preventDefault();
 
-      const delta = e.deltaY > 0 ? -5 : 5;
-      const newScale = Math.max(10, Math.min(200, this.settings.scale + delta));
+      if (e.ctrlKey || e.metaKey) {
+        // Figma-style Canvas Zoom (Ctrl + Scroll)
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // e.deltaY > 0 is scroll down (zoom out). Adjust intensity for smoothness
+        const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
+        this.setZoom(this.zoomLevel + zoomDelta, mouseX, mouseY);
+      } else {
+        // Standard functionality: scale the design sprite
+        if (!this.designSprite) return;
 
-      this.settings.scale = newScale;
-      this.sliderScale.value = newScale;
-      this.scaleValue.textContent = `${newScale}%`;
-      this.designScale = newScale / 100;
+        const delta = e.deltaY > 0 ? -5 : 5;
+        const newScale = Math.max(10, Math.min(200, this.settings.scale + delta));
 
-      this.updateDesignTransform();
-    });
+        this.settings.scale = newScale;
+        this.sliderScale.value = newScale;
+        this.scaleValue.textContent = `${newScale}%`;
+        this.designScale = newScale / 100;
+
+        this.updateDesignTransform();
+        this.markSettingOverridden('scale');
+      }
+    }, { passive: false }); // Needs passive: false to allow e.preventDefault()
   }
 
 
@@ -2485,6 +3072,9 @@ class RavenMockupStudio {
     this.isProcessing = true;
     this.btnGenerate.disabled = true;
     this.progressSection.style.display = 'block';
+
+    // Save current active mockup's state before export
+    this.saveCurrentMockupState();
 
     // Determine processing list
     // If mockupQueue has items, use that. Otherwise use current mockupData as single item.
@@ -2511,16 +3101,8 @@ class RavenMockupStudio {
       // Loop MOCKUPS first (Outer Loop) to minimize texture switching
       for (const mockup of mockupsToProcess) {
 
-        // 1. Load Mockup Texture
-        // We need to load it if it's not the current one, or just re-verify
-        // To be safe, we load the data from file path
-        // Note: For the *current* on screen mockup, we already have data.
-        // For queued ones, we only have path.
-
         // Load Mockup Data
         let currentMockupData = null;
-        // Check if we have a path to construct a clean file:// URL
-        // We prefer this over 'data' which might be 'safe-file://' (good for UI, maybe bad for Pixi export?)
         if (mockup.path) {
           const safePath = mockup.path.replace(/\\/g, '/');
           currentMockupData = `file://${safePath}`;
@@ -2533,32 +3115,51 @@ class RavenMockupStudio {
 
         console.log("Generating Mockup using URL:", currentMockupData);
 
+        // --- DYNAMIC SETTINGS RESOLUTION (v3) ---
+        // Backup active canvas state so we can restore it after this mockup is processed
+        const settingsBackup = { ...this.settings };
+        const posBackup = { ...this.designPosition };
+        const scaleBackup = this.designScale;
+        const rotBackup = this.designRotation;
+        const maskOpsBackup = [...(this.maskOperations || [])];
+
+        const override = mockup.path ? this.mockupOverrides[mockup.path] : null;
+
+        // ALWAYS calculate effective settings for THIS mockup (merges global + partial overrides)
+        this.settings = this.getEffectiveSettings(mockup.path);
+
+        const hasPos = override?.overriddenKeys?.has('position');
+        const hasScale = override?.overriddenKeys?.has('scale');
+        const hasRot = override?.overriddenKeys?.has('rotation');
+
+        // If not explicitly overridden, fall back to global master transforms
+        const masterPos = this.globalDesignPosition || posBackup;
+        const masterScale = this.globalDesignScale !== undefined ? this.globalDesignScale : scaleBackup;
+        const masterRot = this.globalDesignRotation !== undefined ? this.globalDesignRotation : rotBackup;
+
+        this.designPosition = hasPos ? { ...override.designPosition } : { ...masterPos };
+        this.designScale = hasScale ? override.designScale : masterScale;
+        this.designRotation = hasRot ? override.designRotation : masterRot;
+        
+        // Masks are strictly per-mockup
+        this.maskOperations = override ? [...(override.maskOperations || [])] : [];
+
+        if (override && override.overriddenKeys?.size > 0) {
+          console.log(`Applying explicit overrides for: ${mockup.name}`);
+        }
+        // --- END OVERRIDE ---
+
         // Setup Export Stage with this Mockup
-        // We reuse logic from setupLayers but for exportApp
-        // Calculate Warp Scale Ratio
-        // Preview is roughly 800px wide (canvas width).
-        // If export is 4000px, warp must be 5x stronger to look the same.
-        // We use this.app.renderer.width as the reference (preview size).
         let previewWidth = 800;
         if (this.app && this.app.renderer) {
           previewWidth = this.app.renderer.width;
         }
         let exportWidth = this.originalWidth;
 
-        // Use currentMockupData to fetch texture dimensions if possible?
-        // We do this inside the loop later, but setupExportStage needs it NOW.
-        // Actually, we can get it from the loaded texture inside setupExportStage
-        // But we need the RATIO.
-        // Let's pass the previewWidth to setupExportStage and let it calc.
-        // Or better: Just approximation:
-        // We don't know the exact export width until the texture loads in setupExportStage.
-        // So we can compute it AFTER loading?
-        // No, buildLayers is called immediately.
-
-        // Fix: We'll modify setupExportStage to calc ratio internally once texture loads.
-        // We pass the previewWidth reference.
-
         const protectedTexture = await this.setupExportStage(exportApp, currentMockupData, previewWidth);
+
+        // NOTE: Do NOT restore settings here — keep override active through the entire design loop
+
         if (!protectedTexture) {
           console.error(`Failed to setup stage for mockup: ${mockup.name}`);
           continue; // Skip this mockup if texture failed
@@ -2569,9 +3170,15 @@ class RavenMockupStudio {
           const designPath = (typeof designFile === 'string') ? designFile : designFile.path;
           const designNameRaw = (typeof designFile === 'string') ? designFile.split(/[\\/]/).pop() : designFile.name;
 
+          // Calculate target extension
+          let ext = 'jpg';
+          if (this.settings.exportFormat === 'png') ext = 'png';
+          if (this.settings.exportFormat === 'webp') ext = 'webp';
+
           // Update progress
           processed++;
-          this.progressText.textContent = `Processing ${processed} / ${totalOperations} (Mockup: ${mockup.name})`;
+          const mockupBaseName = mockup.name.replace(/\.[^/.]+$/, "");
+          this.progressText.textContent = `Processing ${processed} / ${totalOperations} (${mockupBaseName}.${ext})`;
           this.progressFill.style.width = `${(processed / totalOperations) * 100}%`;
 
           // Load design
@@ -2625,10 +3232,6 @@ class RavenMockupStudio {
           const mockupName = mockup.name.replace(/\.(png|jpg|jpeg)$/i, '');
           const designName = designNameRaw.replace(/\.(png|jpg|jpeg)$/i, '');
 
-          let ext = 'jpg';
-          if (this.settings.exportFormat === 'png') ext = 'png';
-          if (this.settings.exportFormat === 'webp') ext = 'webp';
-
           const outputFilename = `${designName}_${mockupName}.${ext}`;
 
           // Construct full output path manually since main expecting filePath
@@ -2645,6 +3248,14 @@ class RavenMockupStudio {
           // Small delay to prevent UI freeze
           await new Promise(resolve => setTimeout(resolve, 50));
         }
+
+        // Restore active UI state AFTER this mockup is exported, 
+        // to ensure the next iteration starts from a clean baseline.
+        this.settings = settingsBackup;
+        this.designPosition = posBackup;
+        this.designScale = scaleBackup;
+        this.designRotation = rotBackup;
+        this.maskOperations = maskOpsBackup;
 
         // Cleanup Mockup specific textures from Stage before switching Mockup
         // This is important because clearExportTextures only cleared the DESIGN.
@@ -2711,12 +3322,19 @@ class RavenMockupStudio {
         const texW = texture.baseTexture.width;
         const texH = texture.baseTexture.height;
 
-        // CRITICAL: Resize the renderer to match THIS mockup's dimensions.
-        // Without this, the 2nd/3rd mockup renders into a canvas sized for the 1st mockup,
-        // causing design placement to be completely wrong (tiny, off-center, clipped).
-        if (app.screen.width !== texW || app.screen.height !== texH) {
-          app.renderer.resize(texW, texH);
+        // 100% Visual Parity Engine: Lock the export app's logical dimensions to the UI preview,
+        // and map the huge 4K texture to PIXI's hardware resolution scale.
+        // This abstracts all mathematical scaling and directly guarantees 1:1 displacement & blur.
+        const logicalW = this.app && this.app.screen ? this.app.screen.width : 800;
+        const logicalH = texH * (logicalW / texW);
+        const deviceRes = texW / logicalW;
+
+        if (app.screen.width !== logicalW || app.screen.height !== logicalH || app.renderer.resolution !== deviceRes) {
+          app.renderer.resolution = deviceRes;
+          app.renderer.resize(logicalW, logicalH);
         }
+        
+        // Keep tracking raw pixels for later physical extractions if needed
         this.originalWidth = texW;
         this.originalHeight = texH;
 
@@ -2755,23 +3373,24 @@ class RavenMockupStudio {
 
     app.stage.addChild(bg);
 
-    // 2. Displacement — MUST match Editor's FabricMapFilter pipeline exactly
-    // Step A: Create a temp sprite, apply FabricMapFilter + blur
+    // 2. Displacement v2 — MUST match Editor's FabricMapFilter v2 pipeline exactly
+    // Step A: Create a temp sprite, apply FabricMapFilter v2 + blur
     const tempSprite = new PIXI.Sprite(mockupTexture);
     tempSprite.width = app.screen.width;
     tempSprite.height = app.screen.height;
 
+    // No math hacks needed. Using native logical resolution scaling.
     const fabricFilter = new FabricMapFilter(app.screen.width, app.screen.height);
     const blurFilter = new PIXI.filters.BlurFilter();
-    blurFilter.quality = 6;
-    blurFilter.blur = 6;
+    blurFilter.quality = 4;
+    blurFilter.blur = 3;  // pure logical pixels
     tempSprite.filters = [fabricFilter, blurFilter];
 
     // Step B: Bake filtered result into a RenderTexture (just like Editor's setupLayers)
     const renderTexture = PIXI.RenderTexture.create({
       width: app.screen.width,
       height: app.screen.height,
-      resolution: 1 // Export is already at full resolution
+      resolution: app.renderer.resolution // CRITICAL: Extract at 4K density
     });
     app.renderer.render(tempSprite, { renderTexture: renderTexture });
 
@@ -2783,17 +3402,58 @@ class RavenMockupStudio {
     app.stage.addChild(dispSprite);
 
     const dispFilter = new PIXI.DisplacementFilter(dispSprite);
-    dispFilter.resolution = 2;
+    dispFilter.resolution = app.renderer.resolution; // Match hardware scale
 
-    // Step D: Use the same power curve as the editor slider
+    // Step D: Power curve
     const s = this._computeDisplacementScale(this.settings.warpStrength);
-    dispFilter.scale.x = s;
-    dispFilter.scale.y = s;
+    dispFilter.scale.set(s, s);
 
     // 3. Design Container
     const designContainer = new PIXI.Container();
     designContainer.filters = [dispFilter];
     app.stage.addChild(designContainer);
+
+    // --- MASK SYSTEM REPLAY (EXPORT) ---
+    if (this.maskOperations && this.maskOperations.length > 0) {
+      const exportMaskTex = PIXI.RenderTexture.create({
+        width: app.screen.width,
+        height: app.screen.height,
+        resolution: app.renderer.resolution
+      });
+
+      const rect = new PIXI.Graphics();
+      rect.beginFill(0xFFFFFF);
+      rect.drawRect(0, 0, app.screen.width, app.screen.height);
+      rect.endFill();
+      app.renderer.render(rect, { renderTexture: exportMaskTex });
+
+      const eBrush = new PIXI.Graphics();
+      
+      // Mask coordinates run purely in 1:1 logical space, no ratio scaling required!
+      for (let op of this.maskOperations) {
+        eBrush.clear();
+        eBrush.beginFill(0xFFFFFF);
+        eBrush.blendMode = op.mode === 'erase' ? PIXI.BLEND_MODES.ERASE : PIXI.BLEND_MODES.NORMAL;
+        
+        if (op.type === 'polygon' && op.points) {
+          const scaledPoints = op.points.map(p => new PIXI.Point(p.x, p.y));
+          eBrush.drawPolygon(scaledPoints);
+        } else {
+          eBrush.drawCircle(op.x, op.y, op.size);
+        }
+        
+        eBrush.endFill();
+        app.renderer.render(eBrush, { renderTexture: exportMaskTex, clear: false });
+      }
+
+      const exportMaskSprite = new PIXI.Sprite(exportMaskTex);
+      exportMaskSprite.renderable = false; // Must be false or it covers screen in white
+      app.stage.addChild(exportMaskSprite);
+      
+      // Enforce the mask onto the high-res design export container
+      designContainer.mask = exportMaskSprite;
+    }
+    // --- END MASK SYSTEM REPLAY ---
 
     // 4. Realism Layers (Shadow/Highlight)
     // Shadow
@@ -2844,8 +3504,6 @@ class RavenMockupStudio {
     if (this.watermarkTexture && this.watermarkTexture.baseTexture && this.watermarkTexture.baseTexture.valid) {
       const exportCanvasW = app.screen.width;
       const exportCanvasH = app.screen.height;
-      const previewCanvasW = this.app ? this.app.screen.width : 800;
-      const resMultiplier = exportCanvasW / previewCanvasW;
 
       const watermarkExport = new PIXI.Sprite(this.watermarkTexture);
       watermarkExport.alpha = this.settings.watermarkOpacity / 100;
@@ -2857,7 +3515,7 @@ class RavenMockupStudio {
 
       const w = watermarkExport.width;
       const h = watermarkExport.height;
-      const padding = 20 * resMultiplier; // Proportional padding
+      const padding = 20; // Proportional padding
 
       switch (this.settings.watermarkPosition) {
         case 'top-left':
@@ -2931,26 +3589,11 @@ class RavenMockupStudio {
       designSprite.pivot.set(bounds.width / 2, bounds.height / 2);
     }
 
-    // Scale position to full resolution
-    designSprite.x = this.originalWidth * this.designPosition.x;
-    designSprite.y = this.originalHeight * this.designPosition.y;
+    // Scale position to LOGICAL setup
+    designSprite.x = exportApp.screen.width * this.designPosition.x;
+    designSprite.y = exportApp.screen.height * this.designPosition.y;
 
-    // Calculate design size at full resolution
-    // Note: this.baseDesignWidth was calculated relative to screen.
-    // We need to calculate relative to original image.
-    // Ratio: originalWidth / screenWidth
-
-    // Better approach: Re-calculate based on percentage of mockup width, just like in positionDesign()
-    // targetWidth = screenWidth * 0.3
-    // Here: targetWidth = originalWidth * 0.3
-
-    // But wait, the user might have scaled it. 
-    // this.designScale is the slider status (1.0 = 100%).
-    // In positionDesign: this.baseDesignWidth = screenWidth * 0.3
-    // currentWidth = baseDesignWidth * designScale
-
-    // So for export:
-    const baseWidthExport = this.originalWidth * 0.4;
+    const baseWidthExport = exportApp.screen.width * 0.4;
     const aspectRatio = designTexture.width / designTexture.height;
 
     designSprite.width = baseWidthExport * this.designScale;
@@ -3116,6 +3759,30 @@ class RavenMockupStudio {
     this.updateLibraryFooter();
   }
 
+  toggleLibraryMaximize() {
+    this.isLibraryMaximized = !this.isLibraryMaximized;
+    const modalContent = this.libraryModal.querySelector('.modal-content');
+    if (modalContent) {
+      modalContent.classList.toggle('maximized', this.isLibraryMaximized);
+    }
+
+    if (this.btnMaximizeLibrary) {
+      if (this.isLibraryMaximized) {
+        this.btnMaximizeLibrary.title = 'Restore';
+        this.btnMaximizeLibrary.innerHTML = `
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 9h6M9 9H3M15 9V3M9 9V3M15 15h6M9 15H3M15 15v6M9 15v6" />
+          </svg>`;
+      } else {
+        this.btnMaximizeLibrary.title = 'Maximize';
+        this.btnMaximizeLibrary.innerHTML = `
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h6v6M9 3H3v6M15 21h6v-6M9 21H3v-6" />
+          </svg>`;
+      }
+    }
+  }
+
   closeLibrary() {
     this.libraryModal.style.display = 'none';
   }
@@ -3158,14 +3825,14 @@ class RavenMockupStudio {
     const allKeys = Object.keys(this.libraryData);
 
     // Define standard order
-    const fixedOrder = ['T-Shirts', 'Hoodies', 'Cups', 'Mugs', 'Caps', 'Wall Frames', 'User Saved'];
+    const fixedOrder = ['T-Shirts', 'Hoodies', 'Cups', 'Mugs', 'Caps', 'Wall Frames'];
 
     // Separate keys
     const standard = fixedOrder.filter(k => allKeys.includes(k));
     const custom = allKeys.filter(k => !fixedOrder.includes(k)).sort();
 
     // Combine: Standard first, then Custom
-    const keys = ['All Mockups', ...standard, ...custom];
+    const keys = ['All Mockups', '★ Starred', ...standard, ...custom];
 
     keys.forEach((cat) => {
       const li = this.createCategoryElement(cat, this.libraryData[cat]);
@@ -3197,7 +3864,7 @@ class RavenMockupStudio {
     const hasFolders = safeData && safeData.folders && Object.keys(safeData.folders).length > 0;
     
     // Fix: isRemovable was missing its definition
-    const isRemovable = !['All Mockups', 'T-Shirts', 'Hoodies', 'Cups', 'Mugs', 'Caps', 'Wall Frames', 'User Saved', 'Universal'].includes(name);
+    const isRemovable = !['All Mockups', 'T-Shirts', 'Hoodies', 'Cups', 'Mugs', 'Caps', 'Wall Frames', 'Universal'].includes(name);
 
     li.innerHTML = `
       <div class="category-row">
@@ -3288,6 +3955,10 @@ class RavenMockupStudio {
       // Render grid content: Show all files in category recursively
       if (name === 'All Mockups') {
         this.renderLibraryGrid(this.getAllMockups(this.libraryData), name);
+      } else if (name === '★ Starred') {
+        const allMockups = this.getAllMockups(this.libraryData);
+        const starredMockups = allMockups.filter(m => this.favoriteMockups.has(m.path));
+        this.renderLibraryGrid(starredMockups, name);
       } else {
         const allCategoryFiles = [...(safeData.files || []), ...this.getAllMockups(safeData.folders)];
         this.renderLibraryGrid(allCategoryFiles, name);
@@ -3339,9 +4010,16 @@ class RavenMockupStudio {
         // Create a professional name (Remove ext, replace _ and - with space)
         const proName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
 
+        const isStarred = this.favoriteMockups.has(file.path);
+
         el.innerHTML = `
           <img loading="lazy" style="opacity: 0; transition: opacity 0.2s ease;">
           <div class="library-item-label">${proName}</div>
+          <div class="library-item-star ${isStarred ? 'active' : ''}" title="Favorite">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="${isStarred ? '#ffb400' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </div>
           <div class="library-item-delete" title="Delete Mockup">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
           </div>
@@ -3365,9 +4043,34 @@ class RavenMockupStudio {
 
         // Click Handler: Toggle Selection
         el.addEventListener('click', (e) => {
-          // Prevent selection if clicking delete
-          if (e.target.closest('.library-item-delete')) return;
+          // Prevent selection if clicking delete or star
+          if (e.target.closest('.library-item-delete') || e.target.closest('.library-item-star')) return;
           this.toggleLibrarySelection(file, el);
+        });
+
+        // Star/Favorite Handler
+        const starBtn = el.querySelector('.library-item-star');
+        starBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const path = file.path;
+          if (this.favoriteMockups.has(path)) {
+            this.favoriteMockups.delete(path);
+            starBtn.classList.remove('active');
+            starBtn.querySelector('svg').setAttribute('fill', 'none');
+          } else {
+            this.favoriteMockups.add(path);
+            starBtn.classList.add('active');
+            starBtn.querySelector('svg').setAttribute('fill', '#ffb400');
+          }
+          this.saveSettings();
+
+          // If we are in the Starred view, re-render to reflect removal
+          const activeCat = this.libraryCategories.querySelector('.category-row.active');
+          if (activeCat && activeCat.textContent.trim() === '★ Starred') {
+             const allMockups = this.getAllMockups(this.libraryData);
+             const starredMockups = allMockups.filter(m => this.favoriteMockups.has(m.path));
+             this.renderLibraryGrid(starredMockups, '★ Starred');
+          }
         });
 
         // Delete Handler
@@ -3538,10 +4241,307 @@ class RavenMockupStudio {
       : firstMockup.name;
 
     this.resetMockupSettings(); // FIX: Reset Tint in "Use" flow too!
+    this.mockupOverrides = {}; // Clear all overrides for fresh queue
+    this.activeQueueIndex = 0;
+    this.globalSettings = { ...this.settings }; // Snapshot master settings baseline
+    this.globalDesignPosition = { ...this.designPosition };
+    this.globalDesignScale = this.designScale;
+    this.globalDesignRotation = this.designRotation;
 
     this.initPixiApp();
     this.closeLibrary();
+    this.populateQueuePanel();
+    this.updateSliderDimming();
     this.updateGenerateButton(); // Important to update label
+  }
+
+  // --- QUEUE MANAGEMENT SYSTEM ---
+
+  populateQueuePanel() {
+    if (!this.queueThumbnails) return;
+    this.queueThumbnails.innerHTML = '';
+
+    const queue = this.mockupQueue;
+    if (!queue || queue.length === 0) {
+      if (this.queueOffcanvas) this.queueOffcanvas.classList.remove('open');
+      if (this.queueCount) this.queueCount.textContent = '0 items';
+      return;
+    }
+
+    if (this.queueCount) this.queueCount.textContent = `${queue.length} mockup${queue.length > 1 ? 's' : ''}`;
+
+    queue.forEach((mockup, index) => {
+      const item = document.createElement('div');
+      item.className = 'queue-thumb-item' + (index === this.activeQueueIndex ? ' active' : '');
+      item.dataset.index = index;
+
+      // Indicator badge
+      const indicator = document.createElement('div');
+      indicator.className = 'queue-indicator';
+      indicator.textContent = index + 1;
+      item.appendChild(indicator);
+
+      // Check if we have an override saved for this mockup with actual custom keys
+      const entry = this.mockupOverrides[mockup.path];
+      if (entry && entry.overriddenKeys && entry.overriddenKeys.size > 0 && index > 0) {
+        const badge = document.createElement('div');
+        badge.style.cssText = 'position:absolute;bottom:6px;right:6px;background:var(--accent-color);color:white;font-size:9px;padding:2px 5px;border-radius:4px;font-weight:bold;';
+        badge.textContent = 'Custom';
+        item.appendChild(badge);
+
+        // Revert button — clears all overrides for this mockup
+        const revertBtn = document.createElement('button');
+        revertBtn.title = 'Revert to Mockup 1 settings';
+        revertBtn.style.cssText = 'position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:rgba(0,0,0,0.6);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:0;transition:opacity 0.2s;z-index:12;padding:0;';
+        revertBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`;
+        revertBtn.addEventListener('click', (e) => {
+          e.stopPropagation(); // Don't trigger thumbnail click
+          this.revertMockupToMaster(index);
+        });
+        item.appendChild(revertBtn);
+
+        // Show revert button on hover
+        item.addEventListener('mouseenter', () => revertBtn.style.opacity = '1');
+        item.addEventListener('mouseleave', () => revertBtn.style.opacity = '0');
+      }
+
+      const img = document.createElement('img');
+      const safePath = mockup.path.replace(/\\/g, '/');
+      img.src = `safe-file://${mockup.path}`;
+      img.alt = mockup.name;
+      img.onerror = () => {
+        img.style.display = 'none';
+        item.style.background = 'var(--bg-secondary)';
+      };
+      item.appendChild(img);
+
+      // Name label
+      const label = document.createElement('div');
+      label.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent, rgba(0,0,0,0.75));color:white;font-size:9px;padding:4px 6px;border-radius:0 0 6px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      label.textContent = mockup.name;
+      item.appendChild(label);
+
+      item.addEventListener('click', () => this.switchQueueMockup(index));
+      this.queueThumbnails.appendChild(item);
+    });
+
+    // Auto-open panel if multiple mockups
+    if (queue.length > 1 && this.queueOffcanvas) {
+      setTimeout(() => this.queueOffcanvas.classList.add('open'), 400);
+    }
+  }
+  revertMockupToMaster(index) {
+    const mockup = this.mockupQueue[index];
+    if (!mockup) return;
+
+    // Step 1: Flush the currently-active mockup's live state to storage FIRST,
+    // so no stale data leaks when we delete the target override.
+    this.saveCurrentMockupState();
+
+    // Step 2: Nuke the override for the target mockup
+    delete this.mockupOverrides[mockup.path];
+
+    // Step 3: If this mockup is currently active on-screen, reset ALL live state to master
+    if (index === this.activeQueueIndex) {
+      // Reset live settings to master baseline
+      const masterSettings = this.globalSettings || this.settings;
+      this.settings = { ...masterSettings };
+
+      // Reset transforms to master baseline
+      this.designPosition = { ...(this.globalDesignPosition || { x: 0.5, y: 0.4 }) };
+      this.designScale = this.globalDesignScale !== undefined ? this.globalDesignScale : 1;
+      this.designRotation = this.globalDesignRotation !== undefined ? this.globalDesignRotation : 0;
+      this.maskOperations = [];
+
+      // Apply visually to canvas
+      this.applyMockupState({ overriddenKeys: new Set(), settings: {} });
+
+      // CRITICAL: Delete again — applyMockupState/save may have re-created the entry
+      delete this.mockupOverrides[mockup.path];
+    }
+
+    this.populateQueuePanel();
+  }
+
+  // Mark a specific setting as explicitly overridden for the active mockup
+  markSettingOverridden(key) {
+    if (!this.mockupQueue || this.mockupQueue.length === 0) return;
+    const activeMockup = this.mockupQueue[this.activeQueueIndex];
+    if (!activeMockup) return;
+
+    if (!this.mockupOverrides[activeMockup.path]) {
+      this.mockupOverrides[activeMockup.path] = { overriddenKeys: new Set() };
+    }
+    this.mockupOverrides[activeMockup.path].overriddenKeys.add(key);
+    this.saveCurrentMockupState();
+    this.updateSliderDimming();
+    this.populateQueuePanel(); // refresh 'Custom' badges
+  }
+
+  saveCurrentMockupState() {
+    if (!this.mockupQueue || this.mockupQueue.length === 0) return;
+    const activeMockup = this.mockupQueue[this.activeQueueIndex];
+    if (!activeMockup) return;
+
+    if (!this.mockupOverrides[activeMockup.path]) {
+      this.mockupOverrides[activeMockup.path] = { overriddenKeys: new Set() };
+    }
+    const entry = this.mockupOverrides[activeMockup.path];
+    entry.settings = { ...this.settings };
+    entry.designPosition = { ...this.designPosition };
+    entry.designScale = this.designScale;
+    entry.designRotation = this.designRotation;
+    entry.maskOperations = [...(this.maskOperations || [])];
+  }
+
+  // Get the effective settings for a mockup: global merged with its partial overrides
+  getEffectiveSettings(mockupPath) {
+    const base = this.globalSettings || this.settings;
+    const entry = this.mockupOverrides[mockupPath];
+    if (!entry || !entry.overriddenKeys || entry.overriddenKeys.size === 0) {
+      return { ...base };
+    }
+    const merged = { ...base };
+    for (const key of entry.overriddenKeys) {
+      if (entry.settings && entry.settings[key] !== undefined) {
+        merged[key] = entry.settings[key];
+      }
+    }
+    return merged;
+  }
+
+  // Visually dim sliders that are inherited (not overridden) for this mockup
+  updateSliderDimming() {
+    const clearAll = () => {
+      this._setSliderDim('opacity', false);
+      this._setSliderDim('warpStrength', false);
+      this._setSliderDim('scale', false);
+      this._setSliderDim('rotation', false);
+      this._setSliderDim('textureStrength', false);
+    };
+
+    if (!this.mockupQueue || this.mockupQueue.length <= 1) {
+      clearAll();
+      return;
+    }
+
+    // First mockup (index 0) is the master — never dim its sliders
+    if (this.activeQueueIndex === 0) {
+      clearAll();
+      return;
+    }
+
+    const activeMockup = this.mockupQueue[this.activeQueueIndex];
+    if (!activeMockup) return;
+    const entry = this.mockupOverrides[activeMockup.path];
+    const overridden = entry ? entry.overriddenKeys : new Set();
+
+    this._setSliderDim('opacity', !overridden.has('opacity'));
+    this._setSliderDim('warpStrength', !overridden.has('warpStrength'));
+    this._setSliderDim('scale', !overridden.has('scale'));
+    this._setSliderDim('rotation', !overridden.has('rotation'));
+    this._setSliderDim('textureStrength', !overridden.has('textureStrength'));
+  }
+
+  _setSliderDim(key, dimmed) {
+    const map = {
+      opacity: this.sliderOpacity,
+      warpStrength: this.sliderWarp,
+      scale: this.sliderScale,
+      rotation: this.sliderRotation,
+      textureStrength: this.sliderTexture
+    };
+    const slider = map[key];
+    if (!slider) return;
+    const group = slider.closest('.control-group');
+    if (group) {
+      group.style.opacity = dimmed ? '0.45' : '1';
+      group.title = dimmed ? 'Inherited from global settings (change to override for this mockup)' : 'Custom override for this mockup';
+    }
+  }
+
+  applyMockupState(savedState) {
+    if (!savedState) return;
+    const base = this.globalSettings || this.settings;
+    const overridden = savedState.overriddenKeys || new Set();
+
+    // Merge: start from global, then apply only overridden keys
+    const merged = { ...base };
+    if (savedState.settings) {
+      for (const key of overridden) {
+        if (savedState.settings[key] !== undefined) {
+          merged[key] = savedState.settings[key];
+        }
+      }
+    }
+    this.settings = merged;
+
+    // Update slider UI
+    if (this.sliderOpacity) { this.sliderOpacity.value = merged.opacity; this.opacityValue.textContent = `${merged.opacity}%`; }
+    if (this.sliderWarp) { this.sliderWarp.value = merged.warpStrength; this.warpValue.textContent = merged.warpStrength; }
+    if (this.sliderScale) { this.sliderScale.value = merged.scale; this.scaleValue.textContent = `${merged.scale}%`; }
+    if (this.sliderRotation) { this.sliderRotation.value = merged.rotation; this.rotationValue.textContent = `${merged.rotation}°`; }
+    if (this.sliderTexture) { this.sliderTexture.value = merged.textureStrength; this.textureValue.textContent = `${merged.textureStrength}%`; }
+    if (this.checkboxOverlay) this.checkboxOverlay.checked = merged.showOverlay;
+
+    // Restore design transform: use saved if overridden, otherwise fall back to MASTER's position
+    const masterPos = this.globalDesignPosition || { x: 0.5, y: 0.4 };
+    const masterScale = this.globalDesignScale !== undefined ? this.globalDesignScale : 1;
+    const masterRot = this.globalDesignRotation !== undefined ? this.globalDesignRotation : 0;
+
+    this.designPosition = overridden.has('position') ? { ...savedState.designPosition } : { ...masterPos };
+    this.designScale = overridden.has('scale') ? savedState.designScale : masterScale;
+    this.designRotation = overridden.has('rotation') ? savedState.designRotation : masterRot;
+    this.maskOperations = [...(savedState.maskOperations || [])];
+
+    // Apply visuals
+    this.updateDesign();
+    this.updateDesignTransform();
+    this.updateDisplacement();
+    this.updateLighting();
+    this.updateSliderDimming();
+  }
+
+  switchQueueMockup(index) {
+    if (!this.mockupQueue || index === this.activeQueueIndex) return;
+
+    // Save current mockup's state before leaving
+    this.saveCurrentMockupState();
+
+    // If leaving mockup 0 (master), update the global baseline with its current transforms
+    if (this.activeQueueIndex === 0) {
+      this.globalSettings = { ...this.settings };
+      this.globalDesignPosition = { ...this.designPosition };
+      this.globalDesignScale = this.designScale;
+      this.globalDesignRotation = this.designRotation;
+    }
+
+    this.activeQueueIndex = index;
+    const mockup = this.mockupQueue[index];
+    if (!mockup) return;
+
+    // Load this mockup into the canvas
+    this.mockupData = {
+      name: mockup.name,
+      path: mockup.path,
+      data: `safe-file://${mockup.path}`
+    };
+    this.mockupInfo.textContent = mockup.name;
+
+    const savedState = this.mockupOverrides[mockup.path];
+
+    // FIX (v2): Store the pending state for setupLayers() to apply deterministically
+    // instead of the old setTimeout(300ms) which caused race condition position loss.
+    if (savedState) {
+      this._pendingMockupState = savedState;
+    } else {
+      this._pendingMockupState = { overriddenKeys: new Set(), settings: {} };
+    }
+
+    // Re-initialize pixi (loads new background → setupLayers → applies pending state)
+    this.initPixiApp();
+
+    this.populateQueuePanel();
   }
 
   resetMockupSettings() {
@@ -3556,20 +4556,26 @@ class RavenMockupStudio {
   }
 
   async loadMockup() {
-    const result = await window.electronAPI.selectMockupFile();
-    if (result) {
-      // FIX: Clear any previous batch queue from Library
-      this.mockupQueue = [];
+    const results = await window.electronAPI.selectMockupFile();
+    if (results && results.length > 0) {
+      this.mockupQueue = results;
 
       this.resetMockupSettings(); // Reset Tint
 
-      this.mockupData = result;
-      this.mockupInfo.textContent = result.name;
+      this.mockupData = results[0];
+      if (results.length === 1) {
+        this.mockupInfo.textContent = results[0].name;
+      } else {
+        this.mockupInfo.textContent = `${results.length} Bases Loaded`;
+      }
+      
+      this.activeQueueIndex = 0;
+      this.populateQueuePanel();
+      
       this.initPixiApp();
     }
   }
 
-  // ... (handleMockupDrop modification in separate chunk) ...
 
   loadMockupFromLibrary(file) {
     // Determine path with protocol for Electron/Pixi

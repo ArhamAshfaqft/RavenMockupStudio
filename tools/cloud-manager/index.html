@@ -208,15 +208,58 @@
             border-color: var(--accent);
             background: var(--accent-light);
         }
-        .dropzone img {
-            max-width: 100%;
-            max-height: 240px;
-            object-fit: contain;
-            border-radius: var(--radius-md);
-            display: none;
-            margin-top: 20px;
-            box-shadow: var(--shadow-md);
+
+        /* ── Pending Uploads Queue ──────────────────────── */
+        .upload-queue {
+            margin-top: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
         }
+        .upload-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            animation: slideUp 0.3s ease;
+        }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        .upload-item .ui-preview {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: var(--radius-sm);
+            background: var(--bg-input);
+        }
+        .upload-item .ui-controls {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .upload-item .ui-status {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ui-status.success { color: var(--success); }
+        .ui-status.error { color: var(--danger); }
+        .ui-status.pending { color: var(--text-muted); opacity: 0.5; }
+
+        .btn-remove {
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .btn-remove:hover { color: var(--danger); background: rgba(255, 59, 48, 0.1); }
 
         /* ── Manage Grid ────────────────────────────────── */
         .filter-bar {
@@ -467,23 +510,17 @@
 
 <!-- ── Upload Tab ─────────────────────────────────── -->
 <div class="tab-content" id="tab-upload">
-    <div style="max-width: 600px; margin: 0 auto;">
-        <div class="form-group">
-            <label class="form-label">Mockup Display Name</label>
-            <input type="text" class="form-input" id="mockupName" placeholder="e.g. Essential White Tee">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Category</label>
-            <div style="display: flex; gap: 8px;">
-                <select class="form-select" id="mockupCategory" style="flex: 1;">
-                    <option value="">Loading categories...</option>
-                </select>
-                <button class="btn btn-secondary" onclick="addNewCategory()">+ New</button>
+    <div style="max-width: 900px; margin: 0 auto;">
+        <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: center; gap: 24px;">
+            <div style="display: flex; align-items: center; gap: 8px; background: var(--bg-card); padding: 10px 20px; border-radius: 30px; border: 1px solid var(--border-light); cursor: pointer; user-select: none; box-shadow: var(--shadow-sm);" onclick="document.getElementById('removeWatermarks').click()">
+                <input type="checkbox" id="removeWatermarks" style="accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;" onchange="localStorage.setItem('removeWatermarks', this.checked)">
+                <span style="font-size: 14px; font-weight: 600; color: var(--text-primary);">Remove Gemini Watermarks</span>
             </div>
         </div>
-        <div class="form-group">
-            <label class="form-label">Mockup Image (PNG / JPG / WebP)</label>
-            <div class="dropzone" id="dropzone">
+
+        <div class="form-group" style="text-align: center;">
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">Select or drop mockup images to prepare them for bulk upload.</p>
+            <div class="dropzone" id="dropzone" style="padding: 40px 20px;">
                 <div id="dropzoneText">
                     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -492,16 +529,26 @@
                     </svg>
                     <br>
                     <strong style="color: var(--text-primary);">Click to browse</strong>
-                    <span style="color: var(--text-secondary);"> or drag & drop</span>
+                    <span style="color: var(--text-secondary);"> or drag & drop images</span>
                 </div>
-                <img id="preview" src="" alt="Preview">
-                <input type="file" id="fileInput" style="display: none;" accept="image/png, image/jpeg, image/webp">
+                <input type="file" id="fileInput" style="display: none;" accept="image/png, image/jpeg, image/webp" multiple>
             </div>
-            <div id="fileInfo" style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-align: center;"></div>
         </div>
-        <button class="btn btn-primary" id="btnPublish" onclick="publishMockup()" disabled style="width: 100%; justify-content: center; padding: 12px;">
-            Publish to Cloud
-        </button>
+
+        <div id="uploadQueue" class="upload-queue"></div>
+
+        <div id="uploadActions" style="margin-top: 32px; display: none; text-align: center; border-top: 1px solid var(--border-light); padding-top: 24px;">
+            <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 12px;">
+                <span style="font-size: 14px; font-weight: 600; color: var(--text-secondary);">Default Category:</span>
+                <select id="globalCategory" class="form-select" style="width: 200px;" onchange="applyGlobalCategory(this.value)">
+                    <option value="">Select...</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" id="btnPublishBatch" onclick="uploadBatch()" style="width: 100%; max-width: 400px; justify-content: center; padding: 14px; font-size: 16px;">
+                Upload All to Cloud
+            </button>
+            <div id="batchStatus" style="margin-top: 12px; font-size: 13px; font-weight: 500;"></div>
+        </div>
     </div>
 </div>
 
@@ -550,14 +597,13 @@
 <!-- ── Toast Container ─────────────────────────────── -->
 <div class="toast-container" id="toast-container"></div>
 
+<script src="gemini-remover.js"></script>
 <script>
     // ── State ─────────────────────────────────────────
     let allMockups = [];
     let allCategories = [];
     let activeFilter = 'all';
-    let base64Image = null;
-    let base64Thumb = null;
-    let selectedFilename = null;
+    let pendingUploads = []; // [{ file, id, name, category, base64, base64Thumb, status }]
 
     const DEFAULT_CATEGORIES = ['T-Shirts', 'Hoodies & Sweatshirts', 'Baby & Toddler', 'Jerseys & Sports', 'Mugs', 'Caps', 'Wall Frames', 'Universal'];
 
@@ -567,6 +613,12 @@
         try {
             const info = await fetchAPI('/api/info');
             if (info.repoPath) document.getElementById('repoPath').value = info.repoPath;
+            
+            // Load watermark preference
+            const removePref = localStorage.getItem('removeWatermarks');
+            if (removePref !== null) {
+                document.getElementById('removeWatermarks').checked = removePref === 'true';
+            }
         } catch (e) {}
 
         // Bind tabs
@@ -679,11 +731,26 @@
 
     // ── Category Dropdown ─────────────────────────────
     function refreshCategoryDropdown() {
-        const selects = [document.getElementById('mockupCategory'), document.getElementById('editCategory')];
+        const selects = [document.getElementById('mockupCategory'), document.getElementById('editCategory'), document.getElementById('globalCategory')];
         selects.forEach(sel => {
             if (!sel) return;
-            sel.innerHTML = allCategories.map(c => `<option value="${c}">${c}</option>`).join('');
+            const value = sel.value;
+            sel.innerHTML = '<option value="">Select Category...</option>' + allCategories.map(c => `<option value="${c}">${c}</option>`).join('');
+            if (value) sel.value = value;
         });
+        
+        // Update all individual dropdowns in queue
+        document.querySelectorAll('.ui-cat-select').forEach(sel => {
+            const val = sel.value;
+            sel.innerHTML = allCategories.map(c => `<option value="${c}">${c}</option>`).join('');
+            if (val) sel.value = val;
+        });
+    }
+
+    function applyGlobalCategory(val) {
+        if (!val) return;
+        pendingUploads.forEach(u => u.category = val);
+        document.querySelectorAll('.ui-cat-select').forEach(sel => sel.value = val);
     }
 
     function addNewCategory() {
@@ -710,95 +777,285 @@
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropzone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+            if (e.dataTransfer.files.length) handleFiles(Array.from(e.dataTransfer.files));
         });
-        fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
-        document.getElementById('mockupName').addEventListener('input', checkReady);
+        fileInput.addEventListener('change', (e) => { 
+            if (e.target.files.length) handleFiles(Array.from(e.target.files)); 
+            fileInput.value = ''; // Reset
+        });
     }
 
-    function handleFile(file) {
-        if (!file.type.startsWith('image/')) { toast('Please upload an image file.', 'error'); return; }
-        selectedFilename = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-        document.getElementById('fileInfo').textContent = `${selectedFilename} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+    function handleFiles(files) {
+        const imageFiles = files.filter(f => f.type.startsWith('image/'));
+        if (imageFiles.length === 0) return;
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            base64Image = e.target.result;
-            const img = new Image();
-            img.onload = () => {
-                // Generate thumbnail
-                const canvas = document.createElement('canvas');
-                const maxDim = 400;
-                let w = img.width, h = img.height;
-                if (w > h) { if (w > maxDim) { h *= maxDim / w; w = maxDim; } }
-                else { if (h > maxDim) { w *= maxDim / h; h = maxDim; } }
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, w, h);
-                ctx.drawImage(img, 0, 0, w, h);
-                base64Thumb = canvas.toDataURL('image/jpeg', 0.6);
+        imageFiles.forEach(file => {
+            const id = Math.random().toString(36).substring(7);
+            const filename = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+            
+            // Auto-pick name logic: remove dashes, underscores, and extension
+            let niceName = filename.split('.')[0].replace(/[_-]/g, ' ');
+            niceName = niceName.charAt(0).toUpperCase() + niceName.slice(1);
 
-                document.getElementById('preview').src = base64Thumb;
-                document.getElementById('preview').style.display = 'block';
-                document.getElementById('dropzoneText').style.display = 'none';
-                checkReady();
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64 = e.target.result;
+                const img = new Image();
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(img, 0, 0);
 
-                // Auto-fill name
-                const nameInput = document.getElementById('mockupName');
-                if (!nameInput.value) {
-                    let niceName = selectedFilename.split('.')[0].replace(/[_-]/g, ' ');
-                    nameInput.value = niceName.charAt(0).toUpperCase() + niceName.slice(1);
-                    checkReady();
-                }
+                    let wasProcessed = false;
+                    if (document.getElementById('removeWatermarks').checked) {
+                        try {
+                            const result = await GeminiRemover.remove(canvas);
+                            wasProcessed = result.success;
+                            if (!wasProcessed) {
+                                toast(`Watermark not detected on ${file.name}. Ensure it's an original Gemini image.`, 'info');
+                            }
+                        } catch (err) {
+                            console.error('Watermark removal failed:', err);
+                            toast(`Error removing watermark from ${file.name}`, 'error');
+                        }
+                    }
+
+                    // Get the final full-res base64 (potentially cleaned)
+                    const processedBase64 = canvas.toDataURL(file.type || 'image/png');
+
+                    // Generate thumbnail
+                    const thumbCanvas = document.createElement('canvas');
+                    const maxDim = 400;
+                    let w = img.width, h = img.height;
+                    if (w > h) { if (w > maxDim) { h *= maxDim / w; w = maxDim; } }
+                    else { if (h > maxDim) { w *= maxDim / h; h = maxDim; } }
+                    thumbCanvas.width = w; thumbCanvas.height = h;
+                    const tctx = thumbCanvas.getContext('2d');
+                    tctx.fillStyle = '#fff';
+                    tctx.fillRect(0, 0, w, h);
+                    tctx.drawImage(canvas, 0, 0, w, h); // Use the processed canvas for thumb
+                    const base64Thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
+
+                    pendingUploads.push({
+                        id,
+                        file,
+                        filename,
+                        name: niceName,
+                        category: document.getElementById('globalCategory').value || 'T-Shirts',
+                        base64: processedBase64,
+                        base64Thumb,
+                        status: 'pending',
+                        watermarked: wasProcessed
+                    });
+                    renderUploadQueue();
+                };
+                img.src = base64;
             };
-            img.src = base64Image;
-        };
-        reader.readAsDataURL(file);
+            reader.readAsDataURL(file);
+        });
     }
 
-    function checkReady() {
-        const ready = base64Image && document.getElementById('mockupName').value.trim();
-        document.getElementById('btnPublish').disabled = !ready;
+    function isDuplicateName(name, currentItemId) {
+        const lowerName = name.toLowerCase().trim();
+        if (!lowerName) return false;
+        
+        // 1. Check against cloud mockups
+        if (allMockups.some(m => m.name.toLowerCase().trim() === lowerName)) return true;
+        
+        // 2. Check against other pending uploads
+        if (pendingUploads.some(u => u.id !== currentItemId && u.name.toLowerCase().trim() === lowerName)) return true;
+        
+        return false;
     }
 
-    async function publishMockup() {
-        const btn = document.getElementById('btnPublish');
-        const name = document.getElementById('mockupName').value.trim();
-        const category = document.getElementById('mockupCategory').value;
+    function validateDuplicates() {
+        let hasDuplicates = false;
+        pendingUploads.forEach(item => {
+            const isDup = isDuplicateName(item.name, item.id);
+            if (isDup) hasDuplicates = true;
+            
+            const el = document.getElementById(`item-${item.id}`);
+            if (!el) return;
+            
+            const input = el.querySelector('input[type="text"]');
+            const label = el.querySelector('label');
+            
+            if (isDup) {
+                el.style.border = '1px solid var(--danger)';
+                el.style.backgroundColor = 'rgba(255, 59, 48, 0.05)';
+                input.style.borderColor = 'var(--danger)';
+                label.style.color = 'var(--danger)';
+                label.style.fontWeight = 'bold';
+                label.innerHTML = 'Display Name <span style="font-size:10px;">(Duplicate!)</span>';
+            } else {
+                el.style.border = '';
+                el.style.backgroundColor = '';
+                input.style.borderColor = '';
+                label.style.color = '';
+                label.style.fontWeight = '';
+                label.innerHTML = 'Display Name';
+            }
+        });
+        
+        const btnUpload = document.getElementById('btnPublishBatch');
+        if (btnUpload) {
+            btnUpload.disabled = hasDuplicates;
+            btnUpload.innerHTML = hasDuplicates ? 'Fix Duplicates to Upload' : 'Upload All to Cloud';
+            btnUpload.style.backgroundColor = hasDuplicates ? 'var(--text-muted)' : '';
+            btnUpload.style.borderColor = hasDuplicates ? 'var(--text-muted)' : '';
+        }
+    }
+
+    function renderUploadQueue() {
+        const queueEl = document.getElementById('uploadQueue');
+        const actionsEl = document.getElementById('uploadActions');
+        
+        if (pendingUploads.length === 0) {
+            queueEl.innerHTML = '';
+            actionsEl.style.display = 'none';
+            return;
+        }
+
+        actionsEl.style.display = 'block';
+        queueEl.innerHTML = pendingUploads.map(item => `
+            <div class="upload-item" id="item-${item.id}">
+                <img src="${item.base64Thumb}" class="ui-preview">
+                <div class="ui-controls">
+                    <div>
+                        <label class="form-label" style="font-size: 11px;">Display Name</label>
+                        <input type="text" class="form-input btn-sm" value="${item.name}" oninput="updateItemName('${item.id}', this.value)">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 11px;">Category</label>
+                        <select class="form-select btn-sm ui-cat-select" onchange="updateItemCategory('${item.id}', this.value)">
+                            ${allCategories.map(c => `<option value="${c}" ${item.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                 <div class="ui-status" id="status-${item.id}">
+                    ${item.watermarked ? '<span title="Watermark Removed" style="color: var(--accent); cursor: help;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 22 4"/></svg></span>' : getStatusIcon(item.status)}
+                </div>
+                <div class="btn-remove" onclick="removePendingItem('${item.id}')" title="Remove">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </div>
+            </div>
+        `).join('');
+        
+        validateDuplicates();
+    }
+
+    function getStatusIcon(status) {
+        if (status === 'success') return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        if (status === 'error') return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        if (status === 'uploading') return '<div class="spinner" style="border-width: 2px; width: 14px; height: 14px; border-top-color: var(--accent);"></div>';
+        return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.3;"><circle cx="12" cy="12" r="10"/></svg>';
+    }
+
+    function updateItemName(id, val) {
+        const item = pendingUploads.find(u => u.id === id);
+        if (item) {
+            item.name = val;
+            validateDuplicates();
+        }
+    }
+
+    function updateItemCategory(id, val) {
+        const item = pendingUploads.find(u => u.id === id);
+        if (item) item.category = val;
+    }
+
+    function removePendingItem(id) {
+        pendingUploads = pendingUploads.filter(u => u.id !== id);
+        renderUploadQueue();
+    }
+
+    async function uploadBatch() {
+        const btn = document.getElementById('btnPublishBatch');
+        const statusEl = document.getElementById('batchStatus');
+        
+        if (pendingUploads.length === 0) return;
+
+        // --- Duplicate Name Validation ---
+        const namesInBatch = new Set();
+        for (const item of pendingUploads) {
+            const lowerName = item.name.toLowerCase().trim();
+            
+            // 1. Check for duplicates within the current upload batch
+            if (namesInBatch.has(lowerName)) {
+                toast(`Upload aborted: Duplicate name "${item.name}" inside the current batch.`, 'error');
+                return;
+            }
+            namesInBatch.add(lowerName);
+
+            // 2. Check for duplicates against existing mockups in the cloud
+            const existsInCloud = allMockups.some(m => m.name.toLowerCase().trim() === lowerName);
+            if (existsInCloud) {
+                toast(`Upload aborted: "${item.name}" already exists in the cloud.`, 'error');
+                return;
+            }
+        }
+        // ---------------------------------
 
         btn.disabled = true;
-        btn.innerHTML = '<div class="spinner"></div> Publishing...';
+        btn.innerHTML = '<div class="spinner"></div> Processing Batch...';
+        statusEl.textContent = 'Uploading files...';
 
-        try {
-            const data = await fetchAPI('/api/upload', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, category, filename: selectedFilename, base64: base64Image, base64Thumb })
-            });
+        let successCount = 0;
 
-            btn.innerHTML = 'Published!';
-            toast(data.message);
+        for (const item of pendingUploads) {
+            item.status = 'uploading';
+            renderUploadQueue();
 
-            // Reset form
-            setTimeout(() => {
-                btn.innerHTML = 'Publish to Cloud';
-                btn.disabled = true;
-                document.getElementById('mockupName').value = '';
-                base64Image = null;
-                base64Thumb = null;
-                selectedFilename = null;
-                document.getElementById('preview').style.display = 'none';
-                document.getElementById('dropzoneText').style.display = 'block';
-                document.getElementById('fileInfo').textContent = '';
-                refreshAll();
-            }, 2000);
-
-        } catch (e) {
-            toast(e.message, 'error');
-            btn.innerHTML = 'Retry';
-            btn.disabled = false;
+            try {
+                await fetchAPI('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        name: item.name, 
+                        category: item.category, 
+                        filename: item.filename, 
+                        base64: item.base64, 
+                        base64Thumb: item.base64Thumb,
+                        skipSync: true // DON'T sync individual files
+                    })
+                });
+                item.status = 'success';
+                successCount++;
+            } catch (e) {
+                console.error(e);
+                item.status = 'error';
+            }
+            renderUploadQueue();
         }
+
+        if (successCount > 0) {
+            statusEl.textContent = 'Syncing to GitHub...';
+            try {
+                await fetchAPI('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: `Bulk Upload: ${successCount} items` })
+                });
+                statusEl.innerHTML = `<span style="color: var(--success);">SUCCESS: ${successCount} items published!</span>`;
+            } catch (e) {
+                statusEl.innerHTML = `<span style="color: var(--danger);">Uploads saved, but Sync Failed: ${e.message}</span>`;
+            }
+        }
+
+        btn.innerHTML = 'Upload All to Cloud';
+        btn.disabled = false;
+        
+        // Remove successful items after a delay
+        setTimeout(() => {
+            pendingUploads = pendingUploads.filter(u => u.status !== 'success');
+            renderUploadQueue();
+            if (pendingUploads.length === 0) {
+                statusEl.textContent = '';
+                refreshAll();
+            }
+        }, 3000);
     }
 
     // ── Manage Tab ────────────────────────────────────
@@ -1014,5 +1271,7 @@
     // ── Boot ──────────────────────────────────────────
     init();
 </script>
+<script src="/embedded-alpha-maps.js"></script>
+<script src="/gemini-remover.js"></script>
 </body>
 </html>

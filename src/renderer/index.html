@@ -220,9 +220,65 @@
       <!-- Panel B: Canvas -->
       <section class="panel panel-canvas">
         <div class="canvas-toolbar">
-          <span class="canvas-hint">Drag to position, scroll to resize, Shift+drag to rotate</span>
+          <div class="canvas-tools-left">
+            <button id="btn-toggle-mask" class="btn-tool" title="Mockup Mask/Eraser">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <path d="M7.5 4.21l4.5 2.6 4.5-2.6"></path>
+                <path d="M7.5 19.79V14.6L3 12"></path>
+                <path d="M21 12l-4.5 2.6v5.19"></path>
+                <path d="M3.27 6.96L12 12.01l8.73-5.05"></path>
+                <path d="M12 22.08V12"></path>
+              </svg>
+              Mask Eraser
+            </button>
+            <span class="canvas-hint" id="canvas-hint-text">Drag to position, Shift+drag to rotate, Scroll to resize, Ctrl+Scroll to zoom</span>
+          </div>
+          <div class="canvas-tools-right">
+            <button id="btn-zoom-out" class="btn-tool" title="Zoom Out (Ctrl + Scroll Down)">-</button>
+            <span id="label-zoom-level" class="zoom-level-text">100%</span>
+            <button id="btn-zoom-in" class="btn-tool" title="Zoom In (Ctrl + Scroll Up)">+</button>
+            <button id="btn-zoom-fit" class="btn-tool" title="Fit to Screen (Ctrl + 0)">Fit</button>
+          </div>
         </div>
         <div class="canvas-wrapper" id="canvas-wrapper">
+          
+          <!-- Mask Controls Floating Panel -->
+          <div id="mask-controls-panel" class="mask-controls-panel">
+            <label class="control-label" style="margin-bottom: 2px;">Brush Settings</label>
+            <p style="font-size: 10px; color: var(--text-tertiary); margin-bottom: 8px;">Erase areas where the design shouldn't appear. Applies to ALL graphics in the batch.</p>
+            
+            <div class="control-group" style="margin-bottom: 15px;">
+              <div class="control-header">
+                <label>Tool</label>
+              </div>
+              <select id="select-mask-tool" class="select" style="padding: 6px; font-size: 11px;">
+                <option value="brush">Circle Brush</option>
+                <option value="polygon">Polygonal Lasso</option>
+              </select>
+            </div>
+            
+            <div class="control-group" style="margin-bottom: 15px;">
+              <div class="control-header">
+                <label>Mode</label>
+              </div>
+              <select id="select-brush-mode" class="select" style="padding: 6px; font-size: 11px;">
+                <option value="erase">Erase Design</option>
+                <option value="restore">Restore Design</option>
+              </select>
+            </div>
+            
+            <div class="control-group" id="brush-size-group" style="margin-bottom: 15px;">
+              <div class="control-header">
+                <label>Size</label>
+                <span id="brush-size-val" class="control-value">30px</span>
+              </div>
+              <input type="range" class="slider" id="slider-brush-size" min="5" max="200" value="30">
+            </div>
+            
+            <button id="btn-clear-mask" class="btn btn-secondary" style="font-size: 11px; padding: 6px; color: #ff3b30;">Clear Entire Mask</button>
+          </div>
+
           <div class="canvas-placeholder" id="canvas-placeholder">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -231,6 +287,28 @@
             </svg>
             <p>Load a mockup image to begin</p>
           </div>
+
+          <!-- Mockup Queue Off-Canvas Panel -->
+          <div id="queue-offcanvas" class="queue-offcanvas">
+            <button id="btn-toggle-queue" class="btn-toggle-queue" title="Toggle Mockup Queue">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+            <div class="queue-offcanvas-content">
+              <div class="queue-header">
+                <h4 style="margin: 0; font-size: 13px;">Mockup Queue</h4>
+                <span id="queue-count" style="font-size: 11px; color: var(--text-tertiary);">0 items</span>
+              </div>
+              <p style="font-size: 11px; color: var(--text-tertiary); margin: 12px 15px 4px; line-height: 1.4;">
+                Settings from Mockup 1 apply to all. Select any other mockup below to customize its settings independently.
+              </p>
+              <div id="queue-thumbnails" class="queue-thumbnails">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+          </div>
+
         </div>
       </section>
 
@@ -453,7 +531,14 @@
     <div class="modal-content">
       <div class="modal-header">
         <h3>Mockup Library</h3>
-        <button id="btn-close-library" class="btn-icon">×</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-maximize-library" class="btn-icon" title="Maximize">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h6v6M9 3H3v6M15 21h6v-6M9 21H3v-6" />
+            </svg>
+          </button>
+          <button id="btn-close-library" class="btn-icon">×</button>
+        </div>
       </div>
       <div class="library-body">
         <!-- Sidebar -->
@@ -589,13 +674,13 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
             </svg>
-            Studio Expansion & Rendering
+            Major New Features
           </h4>
           <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-primary);">
-            <li><strong>Fabric Warp 2.0:</strong> New High-Pass engine for enhanced wrapping on various colors, including darker tones and pure whites.</li>
-            <li><strong>Cloud Store:</strong> Browse and download new premium mockups directly inside the app, with new mockups added every month.</li>
-            <li><strong>Universal Drop Zones:</strong> Flexible drag-and-drop targets across the setup panel for a smoother workflow.</li>
-            <li><strong>Brand Watermarks:</strong> Protect your brand with the integrated drag-and-drop watermark overlay system.</li>
+            <li><strong>The New Mockup Library:</strong> A complete UI overhaul! Create custom categories, link local folders, drag-and-drop to organize, and browse effortlessly.</li>
+            <li><strong>Independent Batch Settings:</strong> Customize opacity, warp, and alignments for <em>individual</em> mockups in the batch queue without affecting the rest. Perfect for fine-tuning!</li>
+            <li><strong>Brand Watermarks:</strong> Add customizable logo watermarks to your batch exports to instantly protect your listing images.</li>
+            <li><strong>Cloud Store:</strong> Browse and download premium handcrafted mockups seamlessly directly inside the app.</li>
           </ul>
         </div>
 
@@ -605,12 +690,12 @@
               <path
                 d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
             </svg>
-            Improvements & Fixes
+            Engine Improvements & Fixes
           </h4>
           <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-primary);">
-            <li><strong>Expanded Content:</strong> Added some new mockups in the library.</li>
-            <li><strong>Batch Parity:</strong> Synchronized export engine with editor pipeline for reliable visual consistency.</li>
-            <li><strong>Smart Resizing:</strong> Fixed placement offsets in batch mode when processing varied mockup sizes.</li>
+            <li><strong>100% Export Parity:</strong> Rewrote the export Displacement Engine from scratch to use hardware-level scaling. 4K exports now match the 3D wrinkles in the UI 1-to-1, with zero distortion.</li>
+            <li><strong>Memory Optimization:</strong> Heavily optimized VRAM garbage collection during massive batch jobs.</li>
+            <li><strong>Stability:</strong> Resolved issues with state leakage where UI settings from one mockup could bleed into others.</li>
           </ul>
         </div>
 

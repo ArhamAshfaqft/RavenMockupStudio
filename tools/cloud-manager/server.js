@@ -94,8 +94,26 @@ const server = http.createServer(async (req, res) => {
 
     try {
         // ── Static ──────────────────────────────────────────
-        if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
-            return serveStatic(res, path.join(__dirname, 'index.html'), 'text/html');
+        // ── Robust Static File Serving ──────────────────────
+        const staticFiles = ['/index.html', '/gemini-remover.js', '/style.css'];
+        const extToMime = {
+            '.html': 'text/html',
+            '.js': 'application/javascript',
+            '.css': 'text/css',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg'
+        };
+
+        if (req.method === 'GET') {
+            let url = req.url === '/' ? '/index.html' : req.url;
+            const ext = path.extname(url);
+            
+            if (extToMime[ext]) {
+                const filePath = path.join(__dirname, url);
+                if (fs.existsSync(filePath)) {
+                    return serveStatic(res, filePath, extToMime[ext]);
+                }
+            }
         }
 
         // ── API: Info ───────────────────────────────────────
@@ -163,10 +181,20 @@ const server = http.createServer(async (req, res) => {
             });
             saveManifest(filtered);
 
-            // Git sync
-            await gitSync(repoPath, `Published: ${name}`);
+            // Git sync (Optional for batch)
+            if (!data.skipSync) {
+                await gitSync(repoPath, `Published: ${name}`);
+            }
 
             return sendJSON(res, { success: true, message: `Successfully published "${name}" to Cloud!` });
+        }
+
+        // ── API: Sync ───────────────────────────────────────
+        if (req.method === 'POST' && req.url === '/api/sync') {
+            const data = await parseBody(req);
+            const repoPath = getRepoPath();
+            await gitSync(repoPath, data.message || "Bulk Upload Sync");
+            return sendJSON(res, { success: true, message: "GitHub synced successfully!" });
         }
 
         // ── API: Update Mockup ──────────────────────────────

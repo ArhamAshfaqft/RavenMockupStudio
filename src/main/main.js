@@ -321,19 +321,20 @@ ipcMain.handle('download-cloud-mockup', async (event, url, category, filename) =
 // Existing Handlers
 ipcMain.handle('select-mockup-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'avif'] }]
   });
   if (!result.canceled && result.filePaths.length > 0) {
-    const filePath = result.filePaths[0];
-    const data = fs.readFileSync(filePath);
-    const ext = path.extname(filePath).slice(1).toLowerCase();
-    const mimeType = ext === 'jpg' ? 'jpeg' : ext;
-    return {
-      path: filePath,
-      name: path.basename(filePath),
-      data: `data:image/${mimeType};base64,${data.toString('base64')}`
-    };
+    return result.filePaths.map(filePath => {
+      const data = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).slice(1).toLowerCase();
+      const mimeType = ext === 'jpg' ? 'jpeg' : ext;
+      return {
+        path: filePath,
+        name: path.basename(filePath),
+        data: `data:image/${mimeType};base64,${data.toString('base64')}`
+      };
+    });
   }
   return null;
 });
